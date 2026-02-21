@@ -27,10 +27,10 @@
 namespace jambot_nano
 {
 hardware_interface::CallbackReturn JamBotNanoHardware::on_init(
-  const hardware_interface::HardwareInfo & info)
+  const hardware_interface::HardwareComponentInterfaceParams & params)
 {
   if (
-    hardware_interface::SystemInterface::on_init(info) !=
+    hardware_interface::SystemInterface::on_init(params) !=
     hardware_interface::CallbackReturn::SUCCESS)
   {
     return hardware_interface::CallbackReturn::ERROR;
@@ -123,6 +123,10 @@ std::vector<hardware_interface::StateInterface> JamBotNanoHardware::export_state
     wheel_r_.name_, hardware_interface::HW_IF_POSITION, &wheel_r_.pos_));
   state_interfaces.emplace_back(hardware_interface::StateInterface(
     wheel_r_.name_, hardware_interface::HW_IF_VELOCITY, &wheel_r_.vel_));
+
+  // Add battery voltage state interface
+  state_interfaces.emplace_back(hardware_interface::StateInterface(
+    "battery", "voltage", &battery_voltage_));
 
   return state_interfaces;
 }
@@ -218,6 +222,9 @@ hardware_interface::return_type JamBotNanoHardware::read(
   pos_prev = wheel_r_.pos_;
   wheel_r_.pos_ = wheel_r_.calc_enc_angle();
   wheel_r_.vel_ = (wheel_r_.pos_ - pos_prev) / delta_seconds;
+
+  // Read battery voltage
+  battery_voltage_ = comms_.read_battery_voltage();
 
   return hardware_interface::return_type::OK;
 }

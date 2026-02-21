@@ -68,6 +68,13 @@ def generate_launch_description():
         arguments=["jambot_base_controller", "--controller-manager", "/controller_manager"],
     )
 
+    battery_state_publisher_node = Node(
+        package="jambot_nano",
+        executable="battery_state_publisher",
+        name="battery_state_publisher",
+        output="screen",
+    )
+
     # Delay start of robot_controller after `joint_state_broadcaster`
     delay_robot_controller_spawner_after_joint_state_broadcaster_spawner = RegisterEventHandler(
         event_handler=OnProcessExit(
@@ -81,7 +88,7 @@ def generate_launch_description():
         robot_state_pub_node,
         joint_state_broadcaster_spawner,
         delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,
- 
+        battery_state_publisher_node,
     ]
 
     return LaunchDescription(nodes) 
