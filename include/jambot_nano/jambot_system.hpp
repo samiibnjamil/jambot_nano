@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <atomic>
 
 #include "hardware_interface/handle.hpp"
 #include "hardware_interface/hardware_info.hpp"
@@ -26,9 +27,13 @@
 #include "rclcpp/clock.hpp"
 #include "rclcpp/duration.hpp"
 #include "rclcpp/macros.hpp"
+#include "rclcpp/rclcpp.hpp"
 #include "rclcpp/time.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
+#include "sensor_msgs/msg/imu.hpp"
+#include "std_msgs/msg/int32.hpp"
+#include "std_msgs/msg/int32_multi_array.hpp"
 #include "jambot_nano/visibility_control.h"
 
 #include "jambot_nano/arduino_comms.hpp"
@@ -60,7 +65,7 @@ public:
 
   JAMBOT_NANO_PUBLIC
   hardware_interface::CallbackReturn on_init(
-    const hardware_interface::HardwareInfo & params) override;
+    const hardware_interface::HardwareComponentInterfaceParams & params) override;
 
   JAMBOT_NANO_PUBLIC
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
@@ -100,6 +105,16 @@ private:
   Wheel wheel_l_;
   Wheel wheel_r_;
   double battery_voltage_ = 0.0;  // Battery voltage state
+  rclcpp::Node::SharedPtr io_node_;
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr buzzer_sub_;
+  rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr led_sub_;
+  rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
+  std::atomic<int> buzzer_mode_{0};
+  std::atomic<bool> buzzer_cmd_pending_{false};
+  std::atomic<int> led_r_{0};
+  std::atomic<int> led_g_{0};
+  std::atomic<int> led_b_{0};
+  std::atomic<bool> led_cmd_pending_{false};
 };
 
 }  // namespace jambot_nano

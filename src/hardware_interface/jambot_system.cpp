@@ -20,14 +20,18 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <algorithm>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/imu.hpp"
+#include "std_msgs/msg/int32.hpp"
+#include "std_msgs/msg/int32_multi_array.hpp"
 
 namespace jambot_nano
 {
 hardware_interface::CallbackReturn JamBotNanoHardware::on_init(
-  const hardware_interface::HardwareInfo & params)
+  const hardware_interface::HardwareComponentInterfaceParams & params)
 {
   if (
     hardware_interface::SystemInterface::on_init(params) !=
@@ -159,6 +163,45 @@ hardware_interface::CallbackReturn JamBotNanoHardware::on_configure(
       "Failed to connect to any serial port.");
     return hardware_interface::CallbackReturn::ERROR;
   }
+
+  io_node_ = rclcpp::Node::make_shared("jambot_hardware_io");
+  imu_pub_ = io_node_->create_publisher<sensor_msgs::msg::Imu>("/imu/data_raw", 10);
+  buzzer_sub_ = io_node_->create_subscription<std_msgs::msg::Int32>(
+    "/jambot/buzzer_mode",
+    10,
+    [this](const std_msgs::msg::Int32::SharedPtr msg)
+    {
+      buzzer_mode_.store(msg->data);
+      buzzer_cmd_pending_.store(true);
+      RCLCPP_INFO(
+        rclcpp::get_logger("JamBotNanoHardware"),
+        "Queued buzzer mode command: %d",
+        msg->data);
+    });
+  led_sub_ = io_node_->create_subscription<std_msgs::msg::Int32MultiArray>(
+    "/jambot/led_rgb",
+    10,
+    [this](const std_msgs::msg::Int32MultiArray::SharedPtr msg)
+    {
+      if (msg->data.size() < 3) {
+        RCLCPP_WARN(
+          rclcpp::get_logger("JamBotNanoHardware"),
+          "Ignoring LED command with %zu values; expected 3",
+          msg->data.size());
+        return;
+      }
+      const int red = std::clamp(msg->data[0], 0, 1);
+      const int green = std::clamp(msg->data[1], 0, 1);
+      const int blue = std::clamp(msg->data[2], 0, 1);
+      led_r_.store(red);
+      led_g_.store(green);
+      led_b_.store(blue);
+      led_cmd_pending_.store(true);
+      RCLCPP_INFO(
+        rclcpp::get_logger("JamBotNanoHardware"),
+        "Queued LED command: r=%d g=%d b=%d",
+        red, green, blue);
+    });
   
   RCLCPP_INFO(rclcpp::get_logger("JamBotNanoHardware"), "Successfully configured!");
   return hardware_interface::CallbackReturn::SUCCESS;
@@ -172,6 +215,10 @@ hardware_interface::CallbackReturn JamBotNanoHardware::on_cleanup(
   {
     comms_.disconnect();
   }
+  imu_pub_.reset();
+  led_sub_.reset();
+  buzzer_sub_.reset();
+  io_node_.reset();
   RCLCPP_INFO(rclcpp::get_logger("JamBotNanoHardware"), "Successfully cleaned up!");
 
   return hardware_interface::CallbackReturn::SUCCESS;
@@ -198,6 +245,10 @@ hardware_interface::CallbackReturn JamBotNanoHardware::on_deactivate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
   RCLCPP_INFO(rclcpp::get_logger("JamBotNanoHardware"), "Deactivating ...please wait...");
+  if (comms_.connected())
+  {
+    comms_.set_motor_values(0.0, 0.0);
+  }
   RCLCPP_INFO(rclcpp::get_logger("JamBotNanoHardware"), "Successfully deactivated!");
 
   return hardware_interface::CallbackReturn::SUCCESS;
@@ -209,6 +260,11 @@ hardware_interface::return_type JamBotNanoHardware::read(
   if (!comms_.connected())
   {
     return hardware_interface::return_type::ERROR;
+  }
+
+  if (io_node_)
+  {
+    rclcpp::spin_some(io_node_);
   }
 
   // Firmware returns encoder counts in opposite wheel order.
@@ -232,6 +288,34 @@ hardware_interface::return_type JamBotNanoHardware::read(
   // Read battery voltage
   battery_voltage_ = comms_.read_battery_voltage();
 
+  float ax_raw = 0.0f;
+  float ay_raw = 0.0f;
+  float az_raw = 0.0f;
+  float gx_raw = 0.0f;
+  float gy_raw = 0.0f;
+  float gz_raw = 0.0f;
+  comms_.read_imu_data(ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw);
+  if (imu_pub_ && std::isfinite(ax_raw) && std::isfinite(ay_raw) && std::isfinite(az_raw) &&
+      std::isfinite(gx_raw) && std::isfinite(gy_raw) && std::isfinite(gz_raw))
+  {
+    // Convert MPU6050 raw counts using default sensitivities (2g, 250dps).
+    constexpr double kAccelScale = 9.80665 / 16384.0;
+    constexpr double kGyroScale = (M_PI / 180.0) / 131.0;
+
+    sensor_msgs::msg::Imu imu_msg;
+    imu_msg.header.stamp = io_node_->get_clock()->now();
+    imu_msg.header.frame_id = "imu_link";
+    imu_msg.linear_acceleration.x = static_cast<double>(ax_raw) * kAccelScale;
+    imu_msg.linear_acceleration.y = static_cast<double>(ay_raw) * kAccelScale;
+    imu_msg.linear_acceleration.z = static_cast<double>(az_raw) * kAccelScale;
+    imu_msg.angular_velocity.x = static_cast<double>(gx_raw) * kGyroScale;
+    imu_msg.angular_velocity.y = static_cast<double>(gy_raw) * kGyroScale;
+    imu_msg.angular_velocity.z = static_cast<double>(gz_raw) * kGyroScale;
+
+    imu_msg.orientation_covariance[0] = -1.0;  // Orientation unavailable.
+    imu_pub_->publish(imu_msg);
+  }
+
   return hardware_interface::return_type::OK;
 }
 
@@ -241,6 +325,32 @@ hardware_interface::return_type JamBotNanoHardware::write(
   if (!comms_.connected())
   {
     return hardware_interface::return_type::ERROR;
+  }
+
+  if (io_node_)
+  {
+    rclcpp::spin_some(io_node_);
+  }
+
+  if (buzzer_cmd_pending_.exchange(false))
+  {
+    const int mode = buzzer_mode_.load();
+    comms_.play_sound(mode);
+    RCLCPP_INFO(
+      rclcpp::get_logger("JamBotNanoHardware"),
+      "Sent buzzer mode command: %d",
+      mode);
+  }
+  if (led_cmd_pending_.exchange(false))
+  {
+    const int red = led_r_.load();
+    const int green = led_g_.load();
+    const int blue = led_b_.load();
+    comms_.set_led_state(red, green, blue);
+    RCLCPP_INFO(
+      rclcpp::get_logger("JamBotNanoHardware"),
+      "Sent LED command: r=%d g=%d b=%d",
+      red, green, blue);
   }
 
   comms_.set_motor_values(wheel_l_.cmd_, wheel_r_.cmd_);

@@ -20,8 +20,8 @@ public:
   std::string send_msg(const std::string &msg_to_send, bool print_output = false);
   void send_empty_msg();
   void read_encoder_values(int &val_1, int &val_2);
-  void set_motor_values(int val_1, int val_2);
-  void set_led_state(const std::string &color, bool blink = false);
+  void set_motor_values(double left_wheel_rad_s, double right_wheel_rad_s);
+  void set_led_state(int red, int green, int blue);
   void play_sound(int sound_type);
   void read_imu_data(float &ax, float &ay, float &az, float &gx, float &gy, float &gz);
   float read_battery_voltage();

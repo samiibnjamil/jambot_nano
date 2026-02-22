@@ -1,6 +1,7 @@
 #include "jambot_nano/arduino_comms.hpp"
 #include <sstream>
 #include <limits>
+#include <cmath>
 #include <libserial/SerialPort.h>
 #include <rclcpp/rclcpp.hpp>
 
@@ -94,26 +95,36 @@ void ArduinoComms::send_empty_msg()
 void ArduinoComms::read_encoder_values(int &val_1, int &val_2)
 {
   std::string response = send_msg("e\n\r");
-  std::string delimiter = " ";
-  size_t del_pos = response.find(delimiter);
-  std::string token_1 = response.substr(0, del_pos);
-  std::string token_2 = response.substr(del_pos + delimiter.length());
+  std::istringstream iss(response);
+  std::string prefix;
+  int enc_1 = 0;
+  int enc_2 = 0;
+  if (!(iss >> prefix >> enc_1 >> enc_2)) {
+    RCLCPP_WARN(
+      rclcpp::get_logger("ArduinoComms"),
+      "Invalid encoder response '%s'",
+      response.c_str());
+    return;
+  }
 
-  val_1 = std::atoi(token_1.c_str());
-  val_2 = std::atoi(token_2.c_str());
+  val_1 = enc_1;
+  val_2 = enc_2;
 }
 
-void ArduinoComms::set_motor_values(int val_1, int val_2)
+void ArduinoComms::set_motor_values(double left_wheel_rad_s, double right_wheel_rad_s)
 {
+  constexpr double kRadPerSecToRpm = 60.0 / (2.0 * M_PI);
+  const int left_rpm = static_cast<int>(std::lround(left_wheel_rad_s * kRadPerSecToRpm));
+  const int right_rpm = static_cast<int>(std::lround(right_wheel_rad_s * kRadPerSecToRpm));
   std::stringstream ss;
-  ss << "m " << val_1 << " " << val_2 << "\n\r";
+  ss << "m " << left_rpm << " " << right_rpm << "\n\r";
   send_msg(ss.str());
 }
 
-void ArduinoComms::set_led_state(const std::string &color, bool blink)
+void ArduinoComms::set_led_state(int red, int green, int blue)
 {
   std::stringstream ss;
-  ss << "l " << color << (blink ? " B" : "") << "\n\r";
+  ss << "l " << red << " " << green << " " << blue << "\n\r";
   send_msg(ss.str());
 }
 
@@ -127,8 +138,15 @@ void ArduinoComms::play_sound(int sound_type)
 void ArduinoComms::read_imu_data(float &ax, float &ay, float &az, float &gx, float &gy, float &gz)
 {
   std::string response = send_msg("i\n\r");
+  std::string prefix;
   std::istringstream iss(response);
-  iss >> ax >> ay >> az >> gx >> gy >> gz;
+  if (!(iss >> prefix >> ax >> ay >> az >> gx >> gy >> gz)) {
+    RCLCPP_WARN(
+      rclcpp::get_logger("ArduinoComms"),
+      "Invalid IMU response '%s'",
+      response.c_str());
+    ax = ay = az = gx = gy = gz = std::numeric_limits<float>::quiet_NaN();
+  }
 }
 
 float ArduinoComms::read_battery_voltage()
@@ -162,7 +180,7 @@ void ArduinoComms::reset_encoders()
 void ArduinoComms::set_pid_values(int k_p, int k_d, int k_i, int k_o)
 {
   std::stringstream ss;
-  ss << "u " << k_p << ":" << k_d << ":" << k_i << ":" << k_o << "\n\r";
+  ss << "p " << k_p << " " << k_d << " " << k_i << " " << k_o << "\n\r";
   send_msg(ss.str());
 }
 
