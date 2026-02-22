@@ -31,7 +31,7 @@
 namespace jambot_nano
 {
 hardware_interface::CallbackReturn JamBotNanoHardware::on_init(
-  const hardware_interface::HardwareComponentInterfaceParams & params)
+  const hardware_interface::HardwareInfo & params)
 {
   if (
     hardware_interface::SystemInterface::on_init(params) !=
