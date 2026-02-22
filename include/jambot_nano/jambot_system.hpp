@@ -60,7 +60,7 @@ public:
 
   JAMBOT_NANO_PUBLIC
   hardware_interface::CallbackReturn on_init(
-    const hardware_interface::HardwareComponentInterfaceParams & params) override;
+    const hardware_interface::HardwareInfo & params) override;
 
   JAMBOT_NANO_PUBLIC
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
