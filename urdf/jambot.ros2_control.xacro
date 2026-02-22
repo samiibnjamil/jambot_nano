@@ -28,6 +28,9 @@
         <state_interface name="position"/>
         <state_interface name="velocity"/>
       </joint>
+      <sensor name="battery">
+        <state_interface name="voltage"/>
+      </sensor>
     </ros2_control>
 
   </xacro:macro>

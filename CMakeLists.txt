@@ -7,6 +7,7 @@ endif()
 
 # find dependencies
 set(THIS_PACKAGE_INCLUDE_DEPENDS
+  control_msgs
   rclcpp
   std_msgs
   sensor_msgs
@@ -56,6 +57,16 @@ ament_target_dependencies(controller_node
   geometry_msgs
 )
 
+add_executable(battery_state_publisher src/battery_state_publisher.cpp)
+target_include_directories(battery_state_publisher PUBLIC
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(battery_state_publisher
+  control_msgs
+  rclcpp
+  sensor_msgs
+)
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE "JAMBOT_NANO_BUILDING_DLL")
 
 # Export hardware plugins
@@ -86,6 +97,9 @@ install(TARGETS jambot_nano
 
 # Install controller node
 install(TARGETS controller_node
+  DESTINATION lib/${PROJECT_NAME})
+
+install(TARGETS battery_state_publisher
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)

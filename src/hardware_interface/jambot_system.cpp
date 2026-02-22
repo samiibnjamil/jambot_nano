@@ -211,7 +211,13 @@ hardware_interface::return_type JamBotNanoHardware::read(
     return hardware_interface::return_type::ERROR;
   }
 
-  comms_.read_encoder_values(wheel_l_.enc_, wheel_r_.enc_);
+  // Firmware returns encoder counts in opposite wheel order.
+  // Swap assignment so odometry yaw sign matches real turns.
+  comms_.read_encoder_values(wheel_r_.enc_, wheel_l_.enc_);
+
+  /* Correct encoder polarity so forward physical motion is +X in odometry. */
+  wheel_l_.enc_ = -wheel_l_.enc_;
+  wheel_r_.enc_ = -wheel_r_.enc_;
 
   double delta_seconds = period.seconds();
 

@@ -1,5 +1,6 @@
 #include "jambot_nano/arduino_comms.hpp"
 #include <sstream>
+#include <limits>
 #include <libserial/SerialPort.h>
 #include <rclcpp/rclcpp.hpp>
 
@@ -133,7 +134,24 @@ void ArduinoComms::read_imu_data(float &ax, float &ay, float &az, float &gx, flo
 float ArduinoComms::read_battery_voltage()
 {
   std::string response = send_msg("b\n\r");
-  return std::stof(response);
+  try
+  {
+    // Accept both plain numeric responses ("10.96") and prefixed responses ("b 10.96").
+    const size_t number_start = response.find_first_of("+-0123456789.");
+    if (number_start == std::string::npos) {
+      throw std::invalid_argument("no numeric value found");
+    }
+    return std::stof(response.substr(number_start));
+  }
+  catch (const std::exception & ex)
+  {
+    RCLCPP_WARN(
+      rclcpp::get_logger("ArduinoComms"),
+      "Invalid battery response '%s': %s",
+      response.c_str(),
+      ex.what());
+    return std::numeric_limits<float>::quiet_NaN();
+  }
 }
 
 void ArduinoComms::reset_encoders()
@@ -149,4 +167,3 @@ void ArduinoComms::set_pid_values(int k_p, int k_d, int k_i, int k_o)
 }
 
 } // namespace jambot_nano 
-

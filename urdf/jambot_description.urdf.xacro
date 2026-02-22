@@ -44,7 +44,7 @@
   <joint name="${prefix}chassis_joint" type="fixed">
     <parent link="${prefix}base_link"/>
     <child link="${prefix}chassis"/>
-    <origin xyz="${-wheel_offset_x} 0 ${-wheel_offset_z}"/>
+    <origin xyz="${wheel_offset_x} 0 ${-wheel_offset_z}" rpy="0 0 ${PI}"/>
   </joint>
 
   <link name="${prefix}chassis">

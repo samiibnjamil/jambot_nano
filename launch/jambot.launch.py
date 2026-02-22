@@ -59,6 +59,12 @@ def generate_launch_description():
         name="controller_node",
         output="screen",
     )
+    battery_state_publisher_node = Node(
+        package="jambot_nano",
+        executable="battery_state_publisher",
+        name="battery_state_publisher",
+        output="screen",
+    )
 
     control_node = Node(
         package="controller_manager",
@@ -116,6 +122,7 @@ def generate_launch_description():
         delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,
         joy_node,
         controller_node,
+        battery_state_publisher_node,
     ]
 
     return LaunchDescription(nodes)
