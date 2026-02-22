@@ -9,6 +9,7 @@ Panels:
         - /RobotModel1
         - /LaserScan1
         - /LaserScan1/Topic1
+        - /Image1
         - /Map1
         - /Map1/Status1
       Splitter Ratio: 0.5
@@ -148,6 +149,21 @@ Visualization Manager:
         Value: /scan
       Use Fixed Frame: true
       Use rainbow: true
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Image
+      Normalize Range: true
+      Queue Size: 2
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /camera_node/image_raw
       Value: true
     - Alpha: 0.699999988079071
       Binary representation: false
