@@ -96,15 +96,50 @@ void ArduinoComms::read_encoder_values(int &val_1, int &val_2)
 {
   std::string response = send_msg("e\n\r");
   std::istringstream iss(response);
-  std::string prefix;
   int enc_1 = 0;
   int enc_2 = 0;
-  if (!(iss >> prefix >> enc_1 >> enc_2)) {
+  std::string token_1;
+  if (!(iss >> token_1)) {
     RCLCPP_WARN(
       rclcpp::get_logger("ArduinoComms"),
       "Invalid encoder response '%s'",
       response.c_str());
     return;
+  }
+
+  // Accept both "e <left> <right>" and "<left> <right>" firmware formats.
+  if (token_1 == "e" || token_1 == "E")
+  {
+    if (!(iss >> enc_1 >> enc_2)) {
+      RCLCPP_WARN(
+        rclcpp::get_logger("ArduinoComms"),
+        "Invalid encoder response '%s'",
+        response.c_str());
+      return;
+    }
+  }
+  else
+  {
+    try
+    {
+      enc_1 = std::stoi(token_1);
+    }
+    catch (const std::exception &)
+    {
+      RCLCPP_WARN(
+        rclcpp::get_logger("ArduinoComms"),
+        "Invalid encoder response '%s'",
+        response.c_str());
+      return;
+    }
+
+    if (!(iss >> enc_2)) {
+      RCLCPP_WARN(
+        rclcpp::get_logger("ArduinoComms"),
+        "Invalid encoder response '%s'",
+        response.c_str());
+      return;
+    }
   }
 
   val_1 = enc_1;

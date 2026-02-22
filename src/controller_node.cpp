@@ -12,8 +12,8 @@ class TriggerControlNode : public rclcpp::Node
 {
 public:
     TriggerControlNode() : Node("trigger_control_node"),
-                           current_linear_speed_(0.20),
-                           current_angular_speed_(8.0)
+                           current_linear_speed_(0.10),
+                           current_angular_speed_(1.0)
     {
         publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/jambot_base_controller/cmd_vel", 10);
         buzzer_pub_ = this->create_publisher<std_msgs::msg::Int32>("/jambot/buzzer_mode", 10);
