@@ -69,7 +69,6 @@ bool ArduinoComms::connected() const
 
 std::string ArduinoComms::send_msg(const std::string &msg_to_send, bool print_output)
 {
-  serial_conn_.FlushIOBuffers(); // Just in case
   serial_conn_.Write(msg_to_send);
 
   std::string response = "";

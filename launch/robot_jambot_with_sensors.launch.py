@@ -15,6 +15,16 @@ from launch_ros.substitutions import FindPackageShare
 def _build_actions(_context):
     enable_control = LaunchConfiguration("enable_control")
     enable_rviz = LaunchConfiguration("enable_rviz")
+    enable_camera_flip = (
+        LaunchConfiguration("enable_camera_flip").perform(_context).lower() == "true"
+    )
+    camera_rotation_steps_cfg = LaunchConfiguration("camera_rotation_steps").perform(
+        _context
+    )
+    try:
+        camera_rotation_steps = int(camera_rotation_steps_cfg)
+    except ValueError:
+        camera_rotation_steps = 2
 
     robot_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -24,12 +34,39 @@ def _build_actions(_context):
         )
     )
 
-    camera_node = Node(
-        package="camera_ros",
-        executable="camera_node",
-        name="camera_node",
-        output="screen",
-    )
+    if enable_camera_flip:
+        camera_node = Node(
+            package="camera_ros",
+            executable="camera_node",
+            name="camera_node",
+            output="screen",
+            remappings=[("~/image_raw", "/camera_node/image_raw_orig")],
+        )
+        camera_flip_node = Node(
+            package="image_rotate",
+            executable="image_flip_node",
+            name="camera_flip_node",
+            output="screen",
+            remappings=[
+                ("image", "/camera_node/image_raw_orig"),
+                ("rotated/image", "/camera_node/image_raw"),
+            ],
+            parameters=[
+                {
+                    "rotation_steps": camera_rotation_steps,
+                    "use_camera_info": False,
+                    "output_frame_id": "camera_flipped",
+                }
+            ],
+        )
+    else:
+        camera_node = Node(
+            package="camera_ros",
+            executable="camera_node",
+            name="camera_node",
+            output="screen",
+        )
+        camera_flip_node = None
 
     joy_node = Node(
         package="joy",
@@ -60,6 +97,8 @@ def _build_actions(_context):
     )
 
     actions = [robot_launch, camera_node, joy_node, controller_node, rviz_node]
+    if camera_flip_node is not None:
+        actions.append(camera_flip_node)
 
     try:
         ydlidar_share = get_package_share_directory("ydlidar_ros2_driver")
@@ -94,6 +133,16 @@ def generate_launch_description():
                 "enable_rviz",
                 default_value="false",
                 description="Start RViz with jambot.rviz profile",
+            ),
+            DeclareLaunchArgument(
+                "enable_camera_flip",
+                default_value="true",
+                description="Rotate camera image via image_flip_node",
+            ),
+            DeclareLaunchArgument(
+                "camera_rotation_steps",
+                default_value="2",
+                description="Flip rotation steps (0..3), 2 = 180 degrees",
             ),
             OpaqueFunction(function=_build_actions),
         ]

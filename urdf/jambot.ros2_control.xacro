@@ -11,7 +11,7 @@
         <param name="loop_rate">30</param>
         <param name="device">/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0</param>
         <param name="baud_rate">115200</param>
-        <param name="timeout_ms">1000</param>
+        <param name="timeout_ms">100</param>
         <param name="enc_counts_per_rev">404</param>
         <param name="pid_p">20</param>
         <param name="pid_d">12</param>

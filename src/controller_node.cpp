@@ -12,8 +12,8 @@ class TriggerControlNode : public rclcpp::Node
 {
 public:
     TriggerControlNode() : Node("trigger_control_node"),
-                           current_linear_speed_(0.10),
-                           current_angular_speed_(1.0)
+                           current_linear_speed_(0.08),
+                           current_angular_speed_(0.35)
     {
         publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/jambot_base_controller/cmd_vel", 10);
         buzzer_pub_ = this->create_publisher<std_msgs::msg::Int32>("/jambot/buzzer_mode", 10);
@@ -23,7 +23,7 @@ public:
             "/joy", 10, std::bind(&TriggerControlNode::joy_callback, this, std::placeholders::_1));
 
         twist_stamped_ = geometry_msgs::msg::TwistStamped();
-        RCLCPP_INFO(this->get_logger(), "Buzzer controls: Y=toggle, L1/L2=mode up/down");
+        RCLCPP_INFO(this->get_logger(), "Buzzer controls: Y=play once, L1/L2=mode up/down");
         RCLCPP_INFO(this->get_logger(), "LED controls: B=shuffle colors");
     }
 
@@ -72,17 +72,10 @@ private:
         constexpr size_t BUTTON_B = 1;
         constexpr int kMinMode = 1;
         constexpr int kMaxMode = 8;
-
         if (rising_edge(msg, prev_buttons_, BUTTON_Y)) {
-            buzzer_enabled_ = !buzzer_enabled_;
-            if (buzzer_enabled_) {
-                // Current firmware treats n=1 as ON and any other value as OFF.
-                publish_buzzer_mode(1);
-                RCLCPP_INFO(this->get_logger(), "Y pressed: buzzer ON, mode=%d", buzzer_mode_);
-            } else {
-                publish_buzzer_mode(0);
-                RCLCPP_INFO(this->get_logger(), "Y pressed: buzzer OFF");
-            }
+            // Horn behavior: press Y to play the selected pattern once.
+            publish_buzzer_mode(buzzer_mode_);
+            RCLCPP_INFO(this->get_logger(), "Y pressed: play buzzer mode=%d", buzzer_mode_);
         }
 
         if (rising_edge(msg, prev_buttons_, BUTTON_L1)) {
@@ -91,9 +84,6 @@ private:
                 buzzer_mode_ = kMinMode;
             }
             RCLCPP_INFO(this->get_logger(), "L1 pressed: buzzer mode=%d", buzzer_mode_);
-            if (buzzer_enabled_) {
-                publish_buzzer_mode(1);
-            }
         }
 
         if (rising_edge(msg, prev_buttons_, BUTTON_L2)) {
@@ -102,9 +92,6 @@ private:
                 buzzer_mode_ = kMaxMode;
             }
             RCLCPP_INFO(this->get_logger(), "L2 pressed: buzzer mode=%d", buzzer_mode_);
-            if (buzzer_enabled_) {
-                publish_buzzer_mode(1);
-            }
         }
 
         if (rising_edge(msg, prev_buttons_, BUTTON_B)) {
@@ -121,29 +108,35 @@ private:
         float dpad_horizontal = get_axis_or_zero(msg, 6);
         float dpad_vertical = get_axis_or_zero(msg, 7);
 
+        constexpr float kSpeedStep = 0.02f;
+        constexpr float kMinLinearSpeed = 0.05f;
+        constexpr float kMaxLinearSpeed = 0.25f;
+        constexpr float kMinAngularSpeed = 0.10f;
+        constexpr float kMaxAngularSpeed = 0.60f;
+
         if (dpad_vertical > 0.0)
         {
-            current_linear_speed_ += 0.05;
-            current_linear_speed_ = std::min(current_linear_speed_, 1.0f);
+            current_linear_speed_ += kSpeedStep;
+            current_linear_speed_ = std::min(current_linear_speed_, kMaxLinearSpeed);
             RCLCPP_INFO(this->get_logger(), "Increased linear speed scale: %.2f", current_linear_speed_);
         }
         else if (dpad_vertical < 0.0)
         {
-            current_linear_speed_ -= 0.05;
-            current_linear_speed_ = std::max(current_linear_speed_, 0.1f);
+            current_linear_speed_ -= kSpeedStep;
+            current_linear_speed_ = std::max(current_linear_speed_, kMinLinearSpeed);
             RCLCPP_INFO(this->get_logger(), "Decreased linear speed scale: %.2f", current_linear_speed_);
         }
 
         if (dpad_horizontal > 0.0)
         {
-            current_angular_speed_ -= 0.05;
-            current_angular_speed_ = std::min(current_angular_speed_, 1.0f);
+            current_angular_speed_ += kSpeedStep;
+            current_angular_speed_ = std::min(current_angular_speed_, kMaxAngularSpeed);
             RCLCPP_INFO(this->get_logger(), "Increased angular speed scale: %.2f", current_angular_speed_);
         }
         else if (dpad_horizontal < 0.0)
         {
-            current_angular_speed_ += 0.05;
-            current_angular_speed_ = std::max(current_angular_speed_, 0.1f);
+            current_angular_speed_ -= kSpeedStep;
+            current_angular_speed_ = std::max(current_angular_speed_, kMinAngularSpeed);
             RCLCPP_INFO(this->get_logger(), "Decreased angular speed scale: %.2f", current_angular_speed_);
         }
 
@@ -171,7 +164,6 @@ private:
     float current_linear_speed_;
     float current_angular_speed_;
     std::vector<int> prev_buttons_;
-    bool buzzer_enabled_{false};
     int buzzer_mode_{1};
     int led_color_index_{0};
     const std::vector<std::array<int, 3>> led_colors_{
