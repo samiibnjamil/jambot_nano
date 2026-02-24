@@ -12,8 +12,8 @@ class TriggerControlNode : public rclcpp::Node
 {
 public:
     TriggerControlNode() : Node("trigger_control_node"),
-                           current_linear_speed_(0.10),
-                           current_angular_speed_(1.0)
+                           current_linear_speed_(0.25),
+                           current_angular_speed_(1.20)
     {
         publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/jambot_base_controller/cmd_vel", 10);
         buzzer_pub_ = this->create_publisher<std_msgs::msg::Int32>("/jambot/buzzer_mode", 10);
@@ -108,11 +108,11 @@ private:
         float dpad_horizontal = get_axis_or_zero(msg, 6);
         float dpad_vertical = get_axis_or_zero(msg, 7);
 
-        constexpr float kSpeedStep = 0.02f;
-        constexpr float kMinLinearSpeed = 0.05f;
-        constexpr float kMaxLinearSpeed = 0.25f;
-        constexpr float kMinAngularSpeed = 0.10f;
-        constexpr float kMaxAngularSpeed = 0.60f;
+        constexpr float kSpeedStep = 0.05f;
+        constexpr float kMinLinearSpeed = 0.10f;
+        constexpr float kMaxLinearSpeed = 0.60f;
+        constexpr float kMinAngularSpeed = 0.40f;
+        constexpr float kMaxAngularSpeed = 2.50f;
 
         if (dpad_vertical > 0.0)
         {

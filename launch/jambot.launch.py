@@ -13,15 +13,19 @@
 # limitations under the License.
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch.actions import RegisterEventHandler
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
+from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    enable_ekf = LaunchConfiguration("enable_ekf")
+
     # Get URDF via xacro
     robot_description_content = Command(
         [
@@ -40,6 +44,9 @@ def generate_launch_description():
             "config",
             "jambot_controllers.yaml",
         ]
+    )
+    ekf_params = PathJoinSubstitution(
+        [FindPackageShare("jambot_nano"), "config", "ekf.yaml"]
     )
     rviz_config_file = PathJoinSubstitution(
         [FindPackageShare("jambot_nano"), "rviz", "jambot.rviz"]
@@ -64,6 +71,14 @@ def generate_launch_description():
         executable="battery_state_publisher",
         name="battery_state_publisher",
         output="screen",
+    )
+    ekf_node = Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="ekf_filter_node",
+        output="screen",
+        parameters=[ekf_params],
+        condition=IfCondition(enable_ekf),
     )
 
     control_node = Node(
@@ -123,6 +138,16 @@ def generate_launch_description():
         joy_node,
         controller_node,
         battery_state_publisher_node,
+        ekf_node,
     ]
 
-    return LaunchDescription(nodes)
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                "enable_ekf",
+                default_value="false",
+                description="Start EKF on this launch (keep false when EKF runs on PC)",
+            ),
+        ]
+        + nodes
+    )

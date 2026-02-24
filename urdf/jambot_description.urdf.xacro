@@ -180,6 +180,15 @@
 
   <link name="${prefix}camera_link_optical"/>
 
+  <!-- IMU -->
+  <joint name="${prefix}imu_joint" type="fixed">
+    <parent link="${prefix}base_link"/>
+    <child link="${prefix}imu_link"/>
+    <origin xyz="0.0 0.0 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <link name="${prefix}imu_link"/>
+
   <!-- Lidar -->
   <joint name="${prefix}laser_joint" type="fixed">
     <parent link="${prefix}chassis"/>

@@ -15,6 +15,7 @@ from launch_ros.substitutions import FindPackageShare
 def _build_actions(_context):
     enable_control = LaunchConfiguration("enable_control")
     enable_rviz = LaunchConfiguration("enable_rviz")
+    enable_slam = LaunchConfiguration("enable_slam")
     enable_camera_flip = (
         LaunchConfiguration("enable_camera_flip").perform(_context).lower() == "true"
     )
@@ -118,6 +119,33 @@ def _build_actions(_context):
             )
         )
 
+    try:
+        get_package_share_directory("slam_toolbox")
+        mapper_params = os.path.join(
+            get_package_share_directory("jambot_nano"),
+            "config",
+            "mapper_params_online_sync.yaml",
+        )
+        slam_node = Node(
+            package="slam_toolbox",
+            executable="sync_slam_toolbox_node",
+            name="slam_toolbox",
+            output="screen",
+            parameters=[mapper_params],
+            remappings=[("/odom", "/odometry/filtered")],
+            condition=IfCondition(enable_slam),
+        )
+        actions.append(slam_node)
+    except PackageNotFoundError:
+        actions.append(
+            LogInfo(
+                msg=(
+                    "slam_toolbox not found. "
+                    "Skipping SLAM node startup."
+                )
+            )
+        )
+
     return actions
 
 
@@ -133,6 +161,11 @@ def generate_launch_description():
                 "enable_rviz",
                 default_value="false",
                 description="Start RViz with jambot.rviz profile",
+            ),
+            DeclareLaunchArgument(
+                "enable_slam",
+                default_value="false",
+                description="Start slam_toolbox and use /odometry/filtered as odom input",
             ),
             DeclareLaunchArgument(
                 "enable_camera_flip",
