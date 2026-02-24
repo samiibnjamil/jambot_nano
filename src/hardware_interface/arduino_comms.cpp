@@ -2,11 +2,117 @@
 #include <sstream>
 #include <limits>
 #include <cmath>
+#include <cctype>
 #include <libserial/SerialPort.h>
 #include <rclcpp/rclcpp.hpp>
 
 namespace jambot_nano
 {
+namespace
+{
+std::string trim_copy(const std::string & input)
+{
+  const auto first = input.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) {
+    return "";
+  }
+  const auto last = input.find_last_not_of(" \t\r\n");
+  return input.substr(first, last - first + 1);
+}
+
+bool is_integer_token(const std::string & token)
+{
+  if (token.empty()) {
+    return false;
+  }
+  size_t start = 0;
+  if (token[0] == '-' || token[0] == '+') {
+    start = 1;
+  }
+  if (start >= token.size()) {
+    return false;
+  }
+  for (size_t i = start; i < token.size(); ++i) {
+    if (!std::isdigit(static_cast<unsigned char>(token[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool parse_encoder_response(const std::string & raw, int & enc_1, int & enc_2)
+{
+  const std::string response = trim_copy(raw);
+  if (response.empty()) {
+    return false;
+  }
+
+  std::istringstream iss(response);
+  std::string token_1;
+  if (!(iss >> token_1)) {
+    return false;
+  }
+
+  if (token_1 == "e" || token_1 == "E") {
+    return static_cast<bool>(iss >> enc_1 >> enc_2);
+  }
+
+  if (!is_integer_token(token_1)) {
+    return false;
+  }
+
+  try {
+    enc_1 = std::stoi(token_1);
+  } catch (const std::exception &) {
+    return false;
+  }
+  return static_cast<bool>(iss >> enc_2);
+}
+
+bool parse_imu_response(const std::string & raw, float & ax, float & ay, float & az, float & gx, float & gy, float & gz)
+{
+  const std::string response = trim_copy(raw);
+  if (response.empty()) {
+    return false;
+  }
+
+  std::istringstream iss(response);
+  std::string first;
+  if (!(iss >> first)) {
+    return false;
+  }
+
+  if (first == "i" || first == "I") {
+    return static_cast<bool>(iss >> ax >> ay >> az >> gx >> gy >> gz);
+  }
+
+  // Support bare numeric IMU payload without prefix.
+  try {
+    ax = std::stof(first);
+  } catch (const std::exception &) {
+    return false;
+  }
+  return static_cast<bool>(iss >> ay >> az >> gx >> gy >> gz);
+}
+
+bool parse_battery_response(const std::string & raw, float & voltage)
+{
+  const std::string response = trim_copy(raw);
+  if (response.empty()) {
+    return false;
+  }
+  const size_t number_start = response.find_first_of("+-0123456789.");
+  if (number_start == std::string::npos) {
+    return false;
+  }
+  try {
+    voltage = std::stof(response.substr(number_start));
+  } catch (const std::exception &) {
+    return false;
+  }
+  return true;
+}
+}  // namespace
 
 ArduinoComms::ArduinoComms()
 : timeout_ms_(1000)
@@ -55,6 +161,7 @@ void ArduinoComms::connect(const std::string &serial_device, int32_t baud_rate, 
       }
   }
   serial_conn_.SetBaudRate(convert_baud_rate(baud_rate));
+  serial_conn_.FlushIOBuffers();
 }
 
 void ArduinoComms::disconnect()
@@ -94,55 +201,25 @@ void ArduinoComms::send_empty_msg()
 void ArduinoComms::read_encoder_values(int &val_1, int &val_2)
 {
   std::string response = send_msg("e\n\r");
-  std::istringstream iss(response);
   int enc_1 = 0;
   int enc_2 = 0;
-  std::string token_1;
-  if (!(iss >> token_1)) {
-    RCLCPP_WARN(
-      rclcpp::get_logger("ArduinoComms"),
-      "Invalid encoder response '%s'",
-      response.c_str());
-    return;
-  }
-
-  // Accept both "e <left> <right>" and "<left> <right>" firmware formats.
-  if (token_1 == "e" || token_1 == "E")
-  {
-    if (!(iss >> enc_1 >> enc_2)) {
-      RCLCPP_WARN(
-        rclcpp::get_logger("ArduinoComms"),
-        "Invalid encoder response '%s'",
-        response.c_str());
+  constexpr int kMaxLines = 6;
+  for (int i = 0; i < kMaxLines; ++i) {
+    if (parse_encoder_response(response, enc_1, enc_2)) {
+      val_1 = enc_1;
+      val_2 = enc_2;
       return;
     }
-  }
-  else
-  {
-    try
-    {
-      enc_1 = std::stoi(token_1);
-    }
-    catch (const std::exception &)
-    {
-      RCLCPP_WARN(
-        rclcpp::get_logger("ArduinoComms"),
-        "Invalid encoder response '%s'",
-        response.c_str());
-      return;
-    }
-
-    if (!(iss >> enc_2)) {
-      RCLCPP_WARN(
-        rclcpp::get_logger("ArduinoComms"),
-        "Invalid encoder response '%s'",
-        response.c_str());
-      return;
+    try {
+      serial_conn_.ReadLine(response, '\n', timeout_ms_);
+    } catch (const LibSerial::ReadTimeout &) {
+      break;
     }
   }
-
-  val_1 = enc_1;
-  val_2 = enc_2;
+  RCLCPP_WARN(
+    rclcpp::get_logger("ArduinoComms"),
+    "Invalid encoder response '%s'",
+    response.c_str());
 }
 
 void ArduinoComms::set_motor_values(double left_wheel_rad_s, double right_wheel_rad_s)
@@ -172,38 +249,44 @@ void ArduinoComms::play_sound(int sound_type)
 void ArduinoComms::read_imu_data(float &ax, float &ay, float &az, float &gx, float &gy, float &gz)
 {
   std::string response = send_msg("i\n\r");
-  std::string prefix;
-  std::istringstream iss(response);
-  if (!(iss >> prefix >> ax >> ay >> az >> gx >> gy >> gz)) {
-    RCLCPP_WARN(
-      rclcpp::get_logger("ArduinoComms"),
-      "Invalid IMU response '%s'",
-      response.c_str());
-    ax = ay = az = gx = gy = gz = std::numeric_limits<float>::quiet_NaN();
+  constexpr int kMaxLines = 6;
+  for (int i = 0; i < kMaxLines; ++i) {
+    if (parse_imu_response(response, ax, ay, az, gx, gy, gz)) {
+      return;
+    }
+    try {
+      serial_conn_.ReadLine(response, '\n', timeout_ms_);
+    } catch (const LibSerial::ReadTimeout &) {
+      break;
+    }
   }
+  RCLCPP_WARN(
+    rclcpp::get_logger("ArduinoComms"),
+    "Invalid IMU response '%s'",
+    response.c_str());
+  ax = ay = az = gx = gy = gz = std::numeric_limits<float>::quiet_NaN();
 }
 
 float ArduinoComms::read_battery_voltage()
 {
   std::string response = send_msg("b\n\r");
-  try
-  {
-    // Accept both plain numeric responses ("10.96") and prefixed responses ("b 10.96").
-    const size_t number_start = response.find_first_of("+-0123456789.");
-    if (number_start == std::string::npos) {
-      throw std::invalid_argument("no numeric value found");
+  float voltage = std::numeric_limits<float>::quiet_NaN();
+  constexpr int kMaxLines = 6;
+  for (int i = 0; i < kMaxLines; ++i) {
+    if (parse_battery_response(response, voltage)) {
+      return voltage;
     }
-    return std::stof(response.substr(number_start));
+    try {
+      serial_conn_.ReadLine(response, '\n', timeout_ms_);
+    } catch (const LibSerial::ReadTimeout &) {
+      break;
+    }
   }
-  catch (const std::exception & ex)
-  {
-    RCLCPP_WARN(
-      rclcpp::get_logger("ArduinoComms"),
-      "Invalid battery response '%s': %s",
-      response.c_str(),
-      ex.what());
-    return std::numeric_limits<float>::quiet_NaN();
-  }
+  RCLCPP_WARN(
+    rclcpp::get_logger("ArduinoComms"),
+    "Invalid battery response '%s'",
+    response.c_str());
+  return std::numeric_limits<float>::quiet_NaN();
 }
 
 void ArduinoComms::reset_encoders()
