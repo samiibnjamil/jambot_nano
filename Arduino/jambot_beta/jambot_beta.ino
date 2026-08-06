@@ -13,9 +13,14 @@ float eintegral = 0;
 // Low-Pass Filter variables
 
 double v1Filt = 0;
-double v1Prev = 0;
 double v2Filt = 0;
-double v2Prev = 0;
+// Single-pole EMA, alpha tuned for ~6Hz cutoff at the actual 20Hz (50ms)
+// PID sample rate. The previous 3-term filter (0.854/0.0728/0.0728) was
+// commented as "25Hz cutoff" but at this sample rate actually works out
+// to ~0.5Hz (~0.3s time constant) -- fast setpoint/speed changes fed the
+// PID a heavily lagged reading, causing large transient overshoot before
+// the filter caught up to the true (already-overshot) speed.
+const double velFilterAlpha = 0.85;
 
 // Create MPU6050 and KalmanFilter objects
 MPU6050 mpu;
@@ -60,9 +65,22 @@ long lastMotor1Count = 0;
 long lastMotor2Count = 0;
 
 double motor1Speed = 0, motor2Speed = 0;
+// targetRPM1/2 are the PID setpoint, ramped toward desiredRPM1/2 (the
+// last commanded value) instead of stepping instantly -- see
+// updateSetpointRamp(). An instant step let the integral term wind up
+// far past the eventual steady-state output before feedback caught up,
+// causing severe overshoot at higher targets (measured ~350% at 150 RPM
+// vs ~30% at 60 RPM on the same fixed gains).
 double targetRPM1 = 0, targetRPM2 = 0;
+double desiredRPM1 = 0, desiredRPM2 = 0;
 double outputPWM1 = 0, outputPWM2 = 0;
-// Non-beta tuned PID defaults (kept fixed in beta).
+// Original non-beta tuned gains, restored: the real overshoot causes were
+// the instant-step windup (fixed by the setpoint ramp above), the
+// velocity filter's ~50x-too-slow lag (fixed in speedPID()), and a
+// reset-encoder bug that corrupted every test run after the first (fixed
+// in the 'r' handler) -- not Ki itself. With those fixed, Ki=1.7 gives
+// the lowest steady-state error of any value tested (~1.2-1.5%) with
+// acceptable overshoot (~4-6%).
 double Kp = 0.6, Ki = 1.7, Kd = 0.001, Ko = 1.0;
 //double Kp = 0.36, Ki = 0.82, Kd = 0.000;
 //double KpD = 1000.0, KiD = 5.0, KdD = 4.000;
@@ -128,6 +146,13 @@ int rampPWM2 = 0;
 unsigned long lastRampStepTime = 0;
 const unsigned long rampStepIntervalMs = 5;
 
+// Max rate targetRPM1/2 may approach desiredRPM1/2, roughly matching the
+// host-side diff_drive_controller's own configured acceleration limit
+// (~560 RPM/s equivalent) so a direct serial step behaves similarly to
+// a ROS2-driven command.
+const double maxSetpointSlewRpmPerSec = 500.0;
+unsigned long lastSetpointRampTime = 0;
+
 int activeBuzzerType = 0;
 int buzzerStepIndex = 0;
 unsigned long lastBuzzerStepTime = 0;
@@ -146,6 +171,7 @@ bool parseLongValue(const char* text, long* value);
 bool parseDoubleValue(const char* text, double* value);
 void startRampDown();
 void updateRampDown();
+void updateSetpointRamp();
 void updateBuzzerPattern();
 void updateLightPattern();
 void applyLightStep(int patternId, int step);
@@ -176,6 +202,7 @@ void setup() {
 
 void loop() {
   updateRampDown();
+  updateSetpointRamp();
   updateBuzzerPattern();
   updateLightPattern();
   if (pidEnabled) {
@@ -274,11 +301,9 @@ void speedPID(int printFlag) {
     motor1Speed = (motor1Pulses * 1200.0) / CPR;
     motor2Speed = (motor2Pulses * 1200.0) / CPR;
 
-    // Apply Low-Pass Filter to RPM 25hz cukoff
-    v1Filt = 0.854 * v1Filt + 0.0728 * motor1Speed + 0.0728 * v1Prev;
-    v1Prev = motor1Speed;
-    v2Filt = 0.854 * v2Filt + 0.0728 * motor2Speed + 0.0728 * v2Prev;
-    v2Prev = motor2Speed;
+    // Apply Low-Pass Filter to RPM, ~6Hz cutoff (see velFilterAlpha comment).
+    v1Filt = velFilterAlpha * motor1Speed + (1.0 - velFilterAlpha) * v1Filt;
+    v2Filt = velFilterAlpha * motor2Speed + (1.0 - velFilterAlpha) * v2Filt;
 
 
     motor1PID.Compute();
@@ -451,13 +476,17 @@ void processMotorCommands() {
           long rpm1 = 0;
           long rpm2 = 0;
           if (tokenCount == 3 && parseLongValue(tokens[1], &rpm1) && parseLongValue(tokens[2], &rpm2)) {
-            targetRPM1 = rpm1;
-            targetRPM2 = rpm2;
+            // targetRPM1/2 (the actual PID setpoint) ramp toward these in
+            // updateSetpointRamp() instead of stepping instantly.
+            desiredRPM1 = rpm1;
+            desiredRPM2 = rpm2;
             lastMotionCommandTime = millis();
             timeoutActive = false;
 
-            if (targetRPM1 == 0 && targetRPM2 == 0) {
+            if (desiredRPM1 == 0 && desiredRPM2 == 0) {
               // Stop motors immediately and disable PID
+              targetRPM1 = 0;
+              targetRPM2 = 0;
               pidEnabled = false;
               motor1PID.SetMode(MANUAL);  // Disable speed PID
               motor2PID.SetMode(MANUAL);  // Disable speed PID
@@ -531,9 +560,32 @@ void processMotorCommands() {
         }
       case 'p':
         {
-          // Keep PID fixed to the non-beta tuned values.
-          // Accept command for protocol compatibility but ignore values.
-          Serial.println("OK");
+          // Live PID tuning: "p <kp> <kd> <ki> <ko>" (order matches
+          // ArduinoComms::set_pid_values on the ROS2 side). Applies
+          // immediately via SetTunings -- no reflash needed to iterate.
+          double newKp = 0, newKd = 0, newKi = 0, newKo = 0;
+          if (tokenCount == 5 &&
+              parseDoubleValue(tokens[1], &newKp) &&
+              parseDoubleValue(tokens[2], &newKd) &&
+              parseDoubleValue(tokens[3], &newKi) &&
+              parseDoubleValue(tokens[4], &newKo)) {
+            Kp = newKp;
+            Kd = newKd;
+            Ki = newKi;
+            Ko = newKo;
+            motor1PID.SetTunings(Kp, Ki, Kd);
+            motor2PID.SetTunings(Kp, Ki, Kd);
+            Serial.print("OK p=");
+            Serial.print(Kp, 4);
+            Serial.print(" i=");
+            Serial.print(Ki, 4);
+            Serial.print(" d=");
+            Serial.print(Kd, 4);
+            Serial.print(" o=");
+            Serial.println(Ko, 4);
+          } else {
+            Serial.println("ERR bad args");
+          }
           break;
         }
       // case 's':  // Set position setpoints
@@ -553,11 +605,17 @@ void processMotorCommands() {
       //   }
       case 'r':
         {
-          // Reset encoder values
+          // Reset encoder values. lastMotor1Count/lastMotor2Count (the
+          // speedPID() delta baseline) must be reset too -- otherwise the
+          // next speedPID() tick computes encoder1Count(now 0) minus a
+          // stale large lastMotor1Count, a huge bogus negative delta that
+          // slams the PID to full output for one tick.
           noInterrupts();
           encoder1Count = 0;
           encoder2Count = 0;
           interrupts();
+          lastMotor1Count = 0;
+          lastMotor2Count = 0;
           Serial.println("OK");
           break;
         }
@@ -689,6 +747,27 @@ void updateRampDown() {
   if (rampPWM1 == 0 && rampPWM2 == 0) {
     rampDownActive = false;
   }
+}
+
+void updateSetpointRamp() {
+  unsigned long now = millis();
+  if (lastSetpointRampTime == 0) {
+    lastSetpointRampTime = now;
+    return;
+  }
+  double dt = (now - lastSetpointRampTime) / 1000.0;
+  lastSetpointRampTime = now;
+  double maxStep = maxSetpointSlewRpmPerSec * dt;
+
+  double diff1 = desiredRPM1 - targetRPM1;
+  if (diff1 > maxStep) targetRPM1 += maxStep;
+  else if (diff1 < -maxStep) targetRPM1 -= maxStep;
+  else targetRPM1 = desiredRPM1;
+
+  double diff2 = desiredRPM2 - targetRPM2;
+  if (diff2 > maxStep) targetRPM2 += maxStep;
+  else if (diff2 < -maxStep) targetRPM2 -= maxStep;
+  else targetRPM2 = desiredRPM2;
 }
 
 // New LED control functions ====================================
