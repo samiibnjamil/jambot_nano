@@ -1,4 +1,5 @@
 #include "jambot_nano/arduino_comms.hpp"
+#include <algorithm>
 #include <sstream>
 #include <limits>
 #include <cmath>
@@ -176,14 +177,22 @@ bool ArduinoComms::connected() const
 
 std::string ArduinoComms::send_msg(const std::string &msg_to_send, bool print_output)
 {
-  serial_conn_.Write(msg_to_send);
+  try {
+    serial_conn_.Write(msg_to_send);
+  } catch (const std::exception &ex) {
+    std::cerr << "Serial write failed: " << ex.what() << std::endl;
+    ++consecutive_errors_;
+    return "";
+  }
 
   std::string response = "";
   try {
     // Responses end with \r\n so we will read up to (and including) the \n.
     serial_conn_.ReadLine(response, '\n', timeout_ms_);
+    consecutive_errors_ = 0;
   } catch (const LibSerial::ReadTimeout&) {
     std::cerr << "The ReadByte() call has timed out " << std::endl;
+    ++consecutive_errors_;
   }
 
   if (print_output) {
@@ -191,6 +200,11 @@ std::string ArduinoComms::send_msg(const std::string &msg_to_send, bool print_ou
   }
 
   return response;
+}
+
+int ArduinoComms::consecutive_errors() const
+{
+  return consecutive_errors_;
 }
 
 void ArduinoComms::send_empty_msg()
@@ -225,8 +239,18 @@ void ArduinoComms::read_encoder_values(int &val_1, int &val_2)
 void ArduinoComms::set_motor_values(double left_wheel_rad_s, double right_wheel_rad_s)
 {
   constexpr double kRadPerSecToRpm = 60.0 / (2.0 * M_PI);
-  const int left_rpm = static_cast<int>(std::lround(left_wheel_rad_s * kRadPerSecToRpm));
-  const int right_rpm = static_cast<int>(std::lround(right_wheel_rad_s * kRadPerSecToRpm));
+  // Defense-in-depth bound, independent of diff_drive_controller's own velocity
+  // limits: at wheel_radius=0.034m/wheel_separation=0.173m and the configured
+  // max linear (0.7 m/s) / angular (3.5 rad/s) limits (jambot_controllers.yaml),
+  // worst-case required wheel speed is ~282 RPM; this leaves ample headroom
+  // while still catching a genuinely runaway command.
+  constexpr long kMaxSafeRpm = 600;
+
+  long left_rpm = std::lround(left_wheel_rad_s * kRadPerSecToRpm);
+  long right_rpm = std::lround(right_wheel_rad_s * kRadPerSecToRpm);
+  left_rpm = std::clamp(left_rpm, -kMaxSafeRpm, kMaxSafeRpm);
+  right_rpm = std::clamp(right_rpm, -kMaxSafeRpm, kMaxSafeRpm);
+
   std::stringstream ss;
   ss << "m " << left_rpm << " " << right_rpm << "\n\r";
   send_msg(ss.str());

@@ -19,6 +19,7 @@ double v2Prev = 0;
 
 // Create MPU6050 and KalmanFilter objects
 MPU6050 mpu;
+bool imuReady = false;
 
 // RGB Color lamp control pin
 #define CLED A0
@@ -199,10 +200,11 @@ void initMPU6050() {
   mpu.initialize();
   if (mpu.testConnection()) {
     Serial.println("MPU6050 connection successful");
+    imuReady = true;
   } else {
+    // Degrade gracefully: keep the robot drivable even without IMU data.
     Serial.println("MPU6050 connection failed");
-    while (1)
-      ;  // Halt execution if the connection fails
+    imuReady = false;
   }
   delay(1000);  // Give the sensor some time to stabilize
 }
@@ -286,7 +288,7 @@ void speedPID(int printFlag) {
     lastTime = millis();
   }
 
-  applyMotorSpeed(outputPWM1 * Ko, outputPWM2 * Ko);
+  applyMotorSpeed(constrain((int)(outputPWM1 * Ko), -255, 255), constrain((int)(outputPWM2 * Ko), -255, 255));
 
   if (printFlag == 1) {
     static unsigned long lastPrintTime = 0;
@@ -916,6 +918,13 @@ void printDist() {
 }
 
 void sendimu() {
+  if (!imuReady) {
+    // Non-numeric sentinel: host-side parser already treats a failed
+    // numeric parse as NaN and skips publishing that IMU sample.
+    Serial.println("i FAULT");
+    return;
+  }
+
   int16_t ax, ay, az, gx, gy, gz;
   mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 

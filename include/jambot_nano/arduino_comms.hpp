@@ -27,11 +27,13 @@ public:
   float read_battery_voltage();
   void reset_encoders();
   void set_pid_values(int k_p, int k_d, int k_i, int k_o);
+  int consecutive_errors() const;
 
 private:
   LibSerial::BaudRate convert_baud_rate(int baud_rate);
   LibSerial::SerialPort serial_conn_;
   int timeout_ms_;
+  int consecutive_errors_ = 0;
 };
 
 } // namespace jambot_nano

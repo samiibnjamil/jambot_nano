@@ -285,8 +285,14 @@ hardware_interface::return_type JamBotNanoHardware::read(
   wheel_r_.pos_ = wheel_r_.calc_enc_angle();
   wheel_r_.vel_ = (wheel_r_.pos_ - pos_prev) / delta_seconds;
 
-  // Read battery voltage
-  battery_voltage_ = comms_.read_battery_voltage();
+  // Battery voltage changes slowly; only poll it at kBatteryPollIntervalS
+  // instead of every control cycle (avoids a wasted serial round-trip).
+  battery_poll_accum_s_ += delta_seconds;
+  if (battery_poll_accum_s_ >= kBatteryPollIntervalS)
+  {
+    battery_voltage_ = comms_.read_battery_voltage();
+    battery_poll_accum_s_ = 0.0;
+  }
 
   float ax_raw = 0.0f;
   float ay_raw = 0.0f;
@@ -314,6 +320,15 @@ hardware_interface::return_type JamBotNanoHardware::read(
 
     imu_msg.orientation_covariance[0] = -1.0;  // Orientation unavailable.
     imu_pub_->publish(imu_msg);
+  }
+
+  if (comms_.consecutive_errors() >= kMaxConsecutiveSerialErrors)
+  {
+    RCLCPP_ERROR(
+      rclcpp::get_logger("JamBotNanoHardware"),
+      "Serial link unresponsive after %d consecutive errors",
+      comms_.consecutive_errors());
+    return hardware_interface::return_type::ERROR;
   }
 
   return hardware_interface::return_type::OK;
@@ -354,6 +369,16 @@ hardware_interface::return_type JamBotNanoHardware::write(
   }
 
   comms_.set_motor_values(wheel_l_.cmd_, wheel_r_.cmd_);
+
+  if (comms_.consecutive_errors() >= kMaxConsecutiveSerialErrors)
+  {
+    RCLCPP_ERROR(
+      rclcpp::get_logger("JamBotNanoHardware"),
+      "Serial link unresponsive after %d consecutive errors",
+      comms_.consecutive_errors());
+    return hardware_interface::return_type::ERROR;
+  }
+
   return hardware_interface::return_type::OK;
 }
 
