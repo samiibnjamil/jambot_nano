@@ -148,9 +148,13 @@ const unsigned long rampStepIntervalMs = 5;
 
 // Max rate targetRPM1/2 may approach desiredRPM1/2, roughly matching the
 // host-side diff_drive_controller's own configured acceleration limit
-// (~560 RPM/s equivalent) so a direct serial step behaves similarly to
-// a ROS2-driven command.
-const double maxSetpointSlewRpmPerSec = 500.0;
+// (max_acceleration: 1.0 m/s' -> ~280 RPM/s equivalent at wheel_radius
+// 0.034m). Lowered from 500: at the previous, more aggressive host-side
+// accel limit (2.0 m/s'), the two ramps compounding under real (non-RT)
+// loop timing produced unstable/oscillating motor behavior when driven
+// live through diff_drive_controller, even though isolated raw-serial
+// step tests looked fine.
+const double maxSetpointSlewRpmPerSec = 250.0;
 unsigned long lastSetpointRampTime = 0;
 
 int activeBuzzerType = 0;
