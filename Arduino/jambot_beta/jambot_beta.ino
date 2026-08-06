@@ -149,6 +149,7 @@ void updateRampDown();
 void updateBuzzerPattern();
 void updateLightPattern();
 void applyLightStep(int patternId, int step);
+void sendTelemetry();
 
 
 
@@ -379,6 +380,13 @@ void processMotorCommands() {
         {
           // Respond with current imu data
           sendimu();
+          break;
+        }
+      case 't':
+        {
+          // Combined telemetry: encoder + IMU + battery in a single
+          // response, replacing 3 separate host round-trips with 1.
+          sendTelemetry();
           break;
         }
       case 'l':
@@ -940,6 +948,46 @@ void sendimu() {
 void measureBatteryVoltage() {
   updateBatteryState(true);
   Serial.print("b ");
+  Serial.println(lastBatteryVoltage);
+}
+
+void sendTelemetry() {
+  long encoder1Snapshot = 0;
+  long encoder2Snapshot = 0;
+  noInterrupts();
+  encoder1Snapshot = encoder1Count;
+  encoder2Snapshot = encoder2Count;
+  interrupts();
+
+  Serial.print("t ");
+  Serial.print(encoder1Snapshot);
+  Serial.print(" ");
+  Serial.print(encoder2Snapshot);
+  Serial.print(" ");
+
+  if (imuReady) {
+    int16_t ax, ay, az, gx, gy, gz;
+    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+    Serial.print("1 ");
+    Serial.print(ax);
+    Serial.print(" ");
+    Serial.print(ay);
+    Serial.print(" ");
+    Serial.print(az);
+    Serial.print(" ");
+    Serial.print(gx);
+    Serial.print(" ");
+    Serial.print(gy);
+    Serial.print(" ");
+    Serial.print(gz);
+    Serial.print(" ");
+  } else {
+    // imuOk=0; host skips publishing IMU for this cycle.
+    Serial.print("0 0 0 0 0 0 0 ");
+  }
+
+  // Battery is only re-sampled internally at batteryCheckInterval (1Hz);
+  // this just reports the cached value, so bundling it here is free.
   Serial.println(lastBatteryVoltage);
 }
 

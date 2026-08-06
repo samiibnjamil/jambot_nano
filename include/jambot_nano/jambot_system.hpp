@@ -103,17 +103,12 @@ private:
   // Serial link is presumed dead after this many consecutive send/receive
   // failures; read()/write() then report ERROR so controller_manager can react.
   static constexpr int kMaxConsecutiveSerialErrors = 5;
-  // Battery voltage changes slowly; polling it every control cycle (the
-  // controller_manager's update_rate, e.g. 20Hz) wastes a full blocking
-  // serial round-trip for data the firmware itself only refreshes at 1Hz.
-  static constexpr double kBatteryPollIntervalS = 1.0;
 
   ArduinoComms comms_;
   Config cfg_;
   Wheel wheel_l_;
   Wheel wheel_r_;
   double battery_voltage_ = 0.0;  // Battery voltage state
-  double battery_poll_accum_s_ = kBatteryPollIntervalS;  // Force a read on the first cycle.
   rclcpp::Node::SharedPtr io_node_;
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr buzzer_sub_;
   rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr led_sub_;

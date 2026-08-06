@@ -267,13 +267,26 @@ hardware_interface::return_type JamBotNanoHardware::read(
     rclcpp::spin_some(io_node_);
   }
 
+  // Single combined round-trip: encoder + IMU + battery in one serial
+  // transaction, instead of 3 separate blocking request/response calls.
+  int enc_1 = 0;
+  int enc_2 = 0;
+  bool imu_ok = false;
+  float ax_raw = 0.0f;
+  float ay_raw = 0.0f;
+  float az_raw = 0.0f;
+  float gx_raw = 0.0f;
+  float gy_raw = 0.0f;
+  float gz_raw = 0.0f;
+  float battery_raw = 0.0f;
+  comms_.read_telemetry(
+    enc_1, enc_2, imu_ok, ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw, battery_raw);
+
   // Firmware returns encoder counts in opposite wheel order.
   // Swap assignment so odometry yaw sign matches real turns.
-  comms_.read_encoder_values(wheel_r_.enc_, wheel_l_.enc_);
-
-  /* Correct encoder polarity so forward physical motion is +X in odometry. */
-  wheel_l_.enc_ = -wheel_l_.enc_;
-  wheel_r_.enc_ = -wheel_r_.enc_;
+  // Correct encoder polarity so forward physical motion is +X in odometry.
+  wheel_r_.enc_ = -enc_1;
+  wheel_l_.enc_ = -enc_2;
 
   double delta_seconds = period.seconds();
 
@@ -285,23 +298,9 @@ hardware_interface::return_type JamBotNanoHardware::read(
   wheel_r_.pos_ = wheel_r_.calc_enc_angle();
   wheel_r_.vel_ = (wheel_r_.pos_ - pos_prev) / delta_seconds;
 
-  // Battery voltage changes slowly; only poll it at kBatteryPollIntervalS
-  // instead of every control cycle (avoids a wasted serial round-trip).
-  battery_poll_accum_s_ += delta_seconds;
-  if (battery_poll_accum_s_ >= kBatteryPollIntervalS)
-  {
-    battery_voltage_ = comms_.read_battery_voltage();
-    battery_poll_accum_s_ = 0.0;
-  }
+  battery_voltage_ = battery_raw;
 
-  float ax_raw = 0.0f;
-  float ay_raw = 0.0f;
-  float az_raw = 0.0f;
-  float gx_raw = 0.0f;
-  float gy_raw = 0.0f;
-  float gz_raw = 0.0f;
-  comms_.read_imu_data(ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw);
-  if (imu_pub_ && std::isfinite(ax_raw) && std::isfinite(ay_raw) && std::isfinite(az_raw) &&
+  if (imu_pub_ && imu_ok && std::isfinite(ax_raw) && std::isfinite(ay_raw) && std::isfinite(az_raw) &&
       std::isfinite(gx_raw) && std::isfinite(gy_raw) && std::isfinite(gz_raw))
   {
     // Convert MPU6050 raw counts using default sensitivities (2g, 250dps).

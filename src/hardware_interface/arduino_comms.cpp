@@ -1,9 +1,11 @@
 #include "jambot_nano/arduino_comms.hpp"
 #include <algorithm>
+#include <chrono>
 #include <sstream>
 #include <limits>
 #include <cmath>
 #include <cctype>
+#include <thread>
 #include <libserial/SerialPort.h>
 #include <rclcpp/rclcpp.hpp>
 
@@ -113,6 +115,30 @@ bool parse_battery_response(const std::string & raw, float & voltage)
   }
   return true;
 }
+
+// Parses "t <enc1> <enc2> <imuOk> <ax> <ay> <az> <gx> <gy> <gz> <battery>".
+bool parse_telemetry_response(
+  const std::string & raw, int & enc_1, int & enc_2, bool & imu_ok,
+  float & ax, float & ay, float & az, float & gx, float & gy, float & gz,
+  float & battery_voltage)
+{
+  const std::string response = trim_copy(raw);
+  if (response.empty()) {
+    return false;
+  }
+
+  std::istringstream iss(response);
+  std::string prefix;
+  int imu_ok_int = 0;
+  if (!(iss >> prefix) || (prefix != "t" && prefix != "T")) {
+    return false;
+  }
+  if (!(iss >> enc_1 >> enc_2 >> imu_ok_int >> ax >> ay >> az >> gx >> gy >> gz >> battery_voltage)) {
+    return false;
+  }
+  imu_ok = (imu_ok_int != 0);
+  return true;
+}
 }  // namespace
 
 ArduinoComms::ArduinoComms()
@@ -162,7 +188,16 @@ void ArduinoComms::connect(const std::string &serial_device, int32_t baud_rate, 
       }
   }
   serial_conn_.SetBaudRate(convert_baud_rate(baud_rate));
+
+  // Opening the port toggles DTR, which resets the Arduino. Its setup()
+  // (including the MPU6050 init's own 1s stabilization delay) takes a
+  // couple seconds to complete; without waiting here, the first several
+  // reads race the bootloader/setup() and return garbage or nothing,
+  // which can trip the consecutive-error watchdog before the board has
+  // even finished booting.
+  std::this_thread::sleep_for(std::chrono::milliseconds(2500));
   serial_conn_.FlushIOBuffers();
+  consecutive_errors_ = 0;
 }
 
 void ArduinoComms::disconnect()
@@ -311,6 +346,30 @@ float ArduinoComms::read_battery_voltage()
     "Invalid battery response '%s'",
     response.c_str());
   return std::numeric_limits<float>::quiet_NaN();
+}
+
+bool ArduinoComms::read_telemetry(
+  int &enc_1, int &enc_2, bool &imu_ok,
+  float &ax, float &ay, float &az, float &gx, float &gy, float &gz,
+  float &battery_voltage)
+{
+  std::string response = send_msg("t\n\r");
+  constexpr int kMaxLines = 6;
+  for (int i = 0; i < kMaxLines; ++i) {
+    if (parse_telemetry_response(response, enc_1, enc_2, imu_ok, ax, ay, az, gx, gy, gz, battery_voltage)) {
+      return true;
+    }
+    try {
+      serial_conn_.ReadLine(response, '\n', timeout_ms_);
+    } catch (const LibSerial::ReadTimeout &) {
+      break;
+    }
+  }
+  RCLCPP_WARN(
+    rclcpp::get_logger("ArduinoComms"),
+    "Invalid telemetry response '%s'",
+    response.c_str());
+  return false;
 }
 
 void ArduinoComms::reset_encoders()

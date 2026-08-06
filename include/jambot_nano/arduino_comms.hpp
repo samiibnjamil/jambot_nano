@@ -25,6 +25,14 @@ public:
   void play_sound(int sound_type);
   void read_imu_data(float &ax, float &ay, float &az, float &gx, float &gy, float &gz);
   float read_battery_voltage();
+  // Combined encoder + IMU + battery read in a single serial round-trip,
+  // replacing separate read_encoder_values/read_imu_data/read_battery_voltage
+  // calls. imu_ok is false when the firmware's IMU never initialized;
+  // callers should skip publishing IMU data for that cycle in that case.
+  bool read_telemetry(
+    int &enc_1, int &enc_2, bool &imu_ok,
+    float &ax, float &ay, float &az, float &gx, float &gy, float &gz,
+    float &battery_voltage);
   void reset_encoders();
   void set_pid_values(int k_p, int k_d, int k_i, int k_o);
   int consecutive_errors() const;
