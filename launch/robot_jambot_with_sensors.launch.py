@@ -8,7 +8,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
-from launch_ros.actions import Node
+from launch_ros.actions import LifecycleNode, Node
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -126,14 +126,19 @@ def _build_actions(_context):
             "config",
             "mapper_params_online_sync.yaml",
         )
-        slam_node = Node(
+        slam_node = LifecycleNode(
             package="slam_toolbox",
             executable="sync_slam_toolbox_node",
             name="slam_toolbox",
+            namespace="",
             output="screen",
             parameters=[mapper_params],
             remappings=[("/odom", "/odometry/filtered")],
             condition=IfCondition(enable_slam),
+            # slam_toolbox is a lifecycle node -- without autostart it just
+            # sits in the "unconfigured" state forever (no /scan subscription,
+            # no /map), since nothing else in this stack drives its lifecycle.
+            autostart=True,
         )
         actions.append(slam_node)
     except PackageNotFoundError:

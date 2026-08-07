@@ -132,8 +132,80 @@ equal) produced `wheel_l`/`wheel_r` positions climbing together and staying
 matched (within normal encoder noise) for the whole run -- not diverging in
 sign as before.
 
-**Not yet verified:** turning (`angular.z` != 0) was never driven this
-session, only straight-line `linear.x`. The yaw-direction sign convention
-(does positive `angular.z` turn the way TF/REP-103 expects) should be
-sanity-checked with an actual turn before trusting SLAM/nav2 on this
-mapping.
+**Update:** turning was verified in a later session -- positive `angular.z`
+produces the correct CCW/left rotation per REP-103, both on the ground and
+lifted. In-place rotation needs noticeably more torque than straight driving
+(wheel-scrub friction against the floor, not a bug); low `angular.z` (~10
+RPM/wheel) may not overcome floor friction from a dead stop even though the
+same command moves the wheels fine lifted.
+
+---
+
+## "`/map` never appears / slam_toolbox never subscribes to `/scan`, even though the node starts with no errors"
+
+**Symptom:** `robot_jambot_with_sensors.launch.py enable_slam:=true` starts
+`sync_slam_toolbox_node` cleanly (no errors in the log), but `ros2 node info
+/slam_toolbox` shows it's only publishing/subscribing to
+`/parameter_events` and `/rosout` -- no `/scan`, no `/map`. `ros2 lifecycle
+get /slam_toolbox` reports `unconfigured`.
+
+**Root cause:** `sync_slam_toolbox_node` is a lifecycle node
+(`rclcpp_lifecycle::LifecycleNode`). Launching it with a plain
+`launch_ros.actions.Node(...)` starts the process but leaves it in the
+`unconfigured` state forever -- it never subscribes to anything or does any
+work until something explicitly drives it through
+`configure` -> `activate`. Nothing in this stack (no `nav2_lifecycle_manager`,
+no manual transition) was doing that, so the node just sat there looking
+healthy while doing nothing.
+
+**Fix:** in `launch/robot_jambot_with_sensors.launch.py`, use
+`launch_ros.actions.LifecycleNode` instead of `Node` for `slam_node`, with
+`autostart=True`. This is a built-in `LifecycleNode` feature (see
+`launch_ros/actions/lifecycle_node.py`): when `autostart` is true, it emits
+the `configure` + `activate` transitions itself right after the process
+starts -- no manual `EmitEvent`/`OnStateTransition` wiring or lifecycle
+manager needed for a single node like this.
+
+**How to tell if a new lifecycle-managed node (nav2, another slam_toolbox
+mode, etc.) has this same problem:** `ros2 node info <name>` showing only
+the generic `/parameter_events`/`/rosout`/`/*/transition_event` topics with
+none of the topics that node's own docs promise is the tell. Confirm with
+`ros2 lifecycle get <name>` -- `unconfigured` means it needs an
+autostart/lifecycle-manager fix like this one, not a params or wiring bug.
+
+---
+
+## "Custom workspace packages (jambot_nano, camera_ros, ...) aren't found from a fresh terminal"
+
+**Symptom:** `ros2 launch jambot_nano ...` (or any `ros2 pkg prefix
+jambot_nano`) fails with "package not found" in a brand new terminal, but
+works fine if you `cd ~/ros2_ws` first and re-source manually.
+
+**Root cause:** `~/.bashrc` sourced the workspace with a *relative* path
+(`source install/setup.bash`), which only resolves if the shell's cwd
+happens to already be `~/ros2_ws` when `.bashrc` runs -- not true for a
+normal login shell (starts at `$HOME`). Confirmed by running a real login
+shell (`bash -lic ...`) and seeing `install/setup.bash: No such file or
+directory` plus `camera_ros`/`jambot_nano` both unresolvable. Separately,
+`ydlidar_ros2_driver` lives in a completely different workspace
+(`~/ydlidar_ros2_ws`) that was never sourced anywhere, so LIDAR auto-detect
+in `robot_jambot_with_sensors.launch.py` (a `try/except PackageNotFoundError`
+around `get_package_share_directory("ydlidar_ros2_driver")`) always took the
+"not found" fallback in practice, even though the driver was built and
+worked when its workspace was sourced by hand.
+
+**Fix:** `~/.bashrc` now sources both workspaces with absolute, `-f`-guarded
+paths:
+```bash
+source /opt/ros/jazzy/setup.bash
+if [ -f /home/sami/ros2_ws/install/setup.bash ]; then
+    source /home/sami/ros2_ws/install/setup.bash
+fi
+if [ -f /home/sami/ydlidar_ros2_ws/install/setup.bash ]; then
+    source /home/sami/ydlidar_ros2_ws/install/setup.bash
+fi
+```
+If a package that's definitely built still isn't found, check
+`echo $AMENT_PREFIX_PATH | tr ':' '\n'` in a *fresh* shell (not one that's
+been manually `source`d already this session) before assuming the code is
+wrong.

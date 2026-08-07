@@ -69,8 +69,9 @@ def generate_launch_description():
     )
     robot_description = {"robot_description": robot_description_content}
 
-    # Direct path to RViz config file
-    rviz_config_file = "/home/sami/ros2_ws/src/jambot_nano/rviz/jambot_view.rviz"
+    rviz_config_file = PathJoinSubstitution(
+        [FindPackageShare("jambot_nano"), "rviz", "jambot_view.rviz"]
+    )
 
     joint_state_publisher_node = Node(
         package="joint_state_publisher_gui",

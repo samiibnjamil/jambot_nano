@@ -25,8 +25,8 @@ down the first time.
 ## 🗺️ Mapping & SLAM
 [x] Test Manufacturer's LiDAR Pointcloud publisher node
 [x] EKF fusion (`robot_localization`) verified live on the ground: no NaN, filtered odom tracks raw wheel odom within ~0.1deg yaw over a straight+turn sequence. Enabled by default (`enable_ekf:=false` to opt out, e.g. once LIDAR/camera/SLAM are also loaded and CPU is tight)
-[ ] LiDAR Pointcloud publisher node
-[ ] Integrate SLAM Toolbox
+[x] Integrate SLAM Toolbox -- `robot_jambot_with_sensors.launch.py enable_slam:=true`: real LIDAR scan -> `/map`, verified end to end. Needed a lifecycle-activation fix, see `docs/known-issues.md`.
+[ ] LiDAR Pointcloud publisher node (current driver publishes a 2D `/scan` LaserScan, not a PointCloud2 -- separate feature from SLAM integration above)
 [ ] Integrate Nav2
 
 ## 🎮 Manual Control
