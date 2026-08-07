@@ -112,8 +112,16 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "enable_ekf",
-                default_value="false",
-                description="Start EKF on robot side (keep false when EKF runs on PC)",
+                default_value="true",
+                description=(
+                    "Start EKF (robot_localization) on the robot. Verified "
+                    "clean on-Pi: no NaN, filtered odom tracks raw wheel "
+                    "odom within ~0.1deg yaw over a straight+turn sequence "
+                    "on the ground. Pass enable_ekf:=false at launch if "
+                    "you'd rather run it on a separate PC instead (e.g. "
+                    "once LIDAR/camera/SLAM are also loaded on this Pi and "
+                    "CPU becomes tight)."
+                ),
             ),
         ]
         + nodes
