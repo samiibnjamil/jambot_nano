@@ -1,5 +1,6 @@
 #include "jambot_nano/arduino_comms.hpp"
 #include <algorithm>
+#include <iomanip>
 #include <chrono>
 #include <sstream>
 #include <limits>
@@ -286,9 +287,29 @@ void ArduinoComms::set_motor_values(double left_wheel_rad_s, double right_wheel_
   left_rpm = std::clamp(left_rpm, -kMaxSafeRpm, kMaxSafeRpm);
   right_rpm = std::clamp(right_rpm, -kMaxSafeRpm, kMaxSafeRpm);
 
+  if (verbose_telemetry_) {
+    RCLCPP_INFO(
+      rclcpp::get_logger("ArduinoComms"),
+      "set_motor_values: rad_s=(%.4f, %.4f) -> rpm=(%ld, %ld)",
+      left_wheel_rad_s, right_wheel_rad_s, left_rpm, right_rpm);
+  }
+
   std::stringstream ss;
   ss << "m " << left_rpm << " " << right_rpm << "\n\r";
-  send_msg(ss.str());
+  // Unconditional, not gated by verbose_telemetry_: the firmware's reply to
+  // "m" is normally discarded, so a malformed/split write producing
+  // "ERR bad args" would be completely silent while the motors coast on
+  // their old setpoint until the watchdog trips. This only logs on an
+  // actual anomaly, so it's cheap to leave on permanently.
+  const std::string reply = send_msg(ss.str());
+  std::string trimmed = reply;
+  while (!trimmed.empty() && (trimmed.back() == '\n' || trimmed.back() == '\r')) trimmed.pop_back();
+  if (trimmed != "OK") {
+    RCLCPP_WARN(
+      rclcpp::get_logger("ArduinoComms"),
+      "Unexpected reply to '%s': '%s'",
+      ss.str().substr(0, ss.str().size() - 2).c_str(), trimmed.c_str());
+  }
 }
 
 void ArduinoComms::set_led_state(int red, int green, int blue)
@@ -357,6 +378,12 @@ bool ArduinoComms::read_telemetry(
   constexpr int kMaxLines = 6;
   for (int i = 0; i < kMaxLines; ++i) {
     if (parse_telemetry_response(response, enc_1, enc_2, imu_ok, ax, ay, az, gx, gy, gz, battery_voltage)) {
+      if (verbose_telemetry_) {
+        // Echoes the firmware's own view of setpoint/PWM/filtered speed --
+        // real diagnostic value when chasing a control-loop issue, real log
+        // spam at 20Hz otherwise. Off by default; see set_verbose_telemetry().
+        RCLCPP_INFO(rclcpp::get_logger("ArduinoComms"), "FW %s", response.c_str());
+      }
       return true;
     }
     try {
@@ -377,11 +404,15 @@ void ArduinoComms::reset_encoders()
   send_msg("r\n\r");
 }
 
-void ArduinoComms::set_pid_values(int k_p, int k_d, int k_i, int k_o)
+void ArduinoComms::set_pid_values(double k_p, double k_d, double k_i, double k_o)
 {
   std::stringstream ss;
-  ss << "p " << k_p << " " << k_d << " " << k_i << " " << k_o << "\n\r";
-  send_msg(ss.str());
+  ss << std::fixed << std::setprecision(4)
+     << "p " << k_p << " " << k_d << " " << k_i << " " << k_o << "\n\r";
+  const std::string reply = send_msg(ss.str());
+  RCLCPP_INFO(
+    rclcpp::get_logger("ArduinoComms"), "set_pid_values sent '%s' -> '%s'",
+    ss.str().substr(0, ss.str().size() - 2).c_str(), reply.c_str());
 }
 
 } // namespace jambot_nano 

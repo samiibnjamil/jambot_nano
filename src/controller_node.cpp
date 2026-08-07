@@ -8,11 +8,27 @@
 #include <vector>
 #include <string>
 
+struct SpeedMode
+{
+    const char *name;
+    float mps;
+};
+
 class TriggerControlNode : public rclcpp::Node
 {
 public:
+    // SLOW/NORMAL/FAST top linear.x speeds, in m/s. Must stay <= the
+    // controller's max_velocity in jambot_controllers.yaml (currently 1.0)
+    // or diff_drive_controller will clip FAST silently below the intended cap.
+    static constexpr std::array<SpeedMode, 3> kSpeedModes{{
+        {"SLOW", 0.5f},
+        {"NORMAL", 0.75f},
+        {"FAST", 1.0f},
+    }};
+
     TriggerControlNode() : Node("trigger_control_node"),
-                           current_linear_speed_(0.25),
+                           speed_mode_index_(1),  // start in NORMAL
+                           current_linear_speed_(kSpeedModes[1].mps),
                            current_angular_speed_(1.20)
     {
         publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/jambot_base_controller/cmd_vel", 10);
@@ -25,6 +41,8 @@ public:
         twist_stamped_ = geometry_msgs::msg::TwistStamped();
         RCLCPP_INFO(this->get_logger(), "Buzzer controls: Y=play once, L1/L2=mode up/down");
         RCLCPP_INFO(this->get_logger(), "LED controls: B=shuffle colors");
+        RCLCPP_INFO(this->get_logger(), "Speed controls: dpad up/down = SLOW/NORMAL/FAST (starting: %s, %.2f m/s)",
+                    kSpeedModes[speed_mode_index_].name, current_linear_speed_);
     }
 
 private:
@@ -108,34 +126,51 @@ private:
         float dpad_horizontal = get_axis_or_zero(msg, 6);
         float dpad_vertical = get_axis_or_zero(msg, 7);
 
-        constexpr float kSpeedStep = 0.05f;
-        constexpr float kMinLinearSpeed = 0.10f;
-        constexpr float kMaxLinearSpeed = 0.60f;
         constexpr float kMinAngularSpeed = 0.40f;
         constexpr float kMaxAngularSpeed = 2.50f;
 
-        if (dpad_vertical > 0.0)
+        // Discrete speed modes rather than continuous fine-adjustment: dpad
+        // up/down steps between them. Values are top linear.x speed in m/s,
+        // audited via repeated live tests (see rpm450_audit and the 1.0/0.8/0.6
+        // m/s sweep) -- FAST sits at ~63% of the measured PID/PWM headroom
+        // ceiling on this platform's motors, leaving margin for real-world
+        // load (floor friction, incline, battery sag) that lifted-wheel
+        // testing doesn't capture.
+        // Edge-triggered on dpad_vertical, not level-triggered: /joy re-sends
+        // the held axis value every message, so without this a single press
+        // held for a couple of frames would blow through every mode instead
+        // of stepping once.
+        bool mode_changed = false;
+        if (dpad_vertical > 0.0 && prev_dpad_vertical_ <= 0.0 &&
+            speed_mode_index_ < static_cast<int>(kSpeedModes.size()) - 1)
         {
-            current_linear_speed_ += kSpeedStep;
-            current_linear_speed_ = std::min(current_linear_speed_, kMaxLinearSpeed);
-            RCLCPP_INFO(this->get_logger(), "Increased linear speed scale: %.2f", current_linear_speed_);
+            ++speed_mode_index_;
+            mode_changed = true;
         }
-        else if (dpad_vertical < 0.0)
+        else if (dpad_vertical < 0.0 && prev_dpad_vertical_ >= 0.0 && speed_mode_index_ > 0)
         {
-            current_linear_speed_ -= kSpeedStep;
-            current_linear_speed_ = std::max(current_linear_speed_, kMinLinearSpeed);
-            RCLCPP_INFO(this->get_logger(), "Decreased linear speed scale: %.2f", current_linear_speed_);
+            --speed_mode_index_;
+            mode_changed = true;
+        }
+        prev_dpad_vertical_ = dpad_vertical;
+        if (mode_changed)
+        {
+            current_linear_speed_ = kSpeedModes[speed_mode_index_].mps;
+            RCLCPP_INFO(
+                this->get_logger(), "Speed mode: %s (%.2f m/s)",
+                kSpeedModes[speed_mode_index_].name, current_linear_speed_);
         }
 
+        constexpr float kAngularSpeedStep = 0.05f;
         if (dpad_horizontal > 0.0)
         {
-            current_angular_speed_ += kSpeedStep;
+            current_angular_speed_ += kAngularSpeedStep;
             current_angular_speed_ = std::min(current_angular_speed_, kMaxAngularSpeed);
             RCLCPP_INFO(this->get_logger(), "Increased angular speed scale: %.2f", current_angular_speed_);
         }
         else if (dpad_horizontal < 0.0)
         {
-            current_angular_speed_ -= kSpeedStep;
+            current_angular_speed_ -= kAngularSpeedStep;
             current_angular_speed_ = std::max(current_angular_speed_, kMinAngularSpeed);
             RCLCPP_INFO(this->get_logger(), "Decreased angular speed scale: %.2f", current_angular_speed_);
         }
@@ -161,6 +196,8 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr subscription_;
     geometry_msgs::msg::TwistStamped twist_stamped_;
 
+    int speed_mode_index_;
+    float prev_dpad_vertical_{0.0f};
     float current_linear_speed_;
     float current_angular_speed_;
     std::vector<int> prev_buttons_;

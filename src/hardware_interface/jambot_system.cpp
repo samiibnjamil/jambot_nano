@@ -50,15 +50,21 @@ hardware_interface::CallbackReturn JamBotNanoHardware::on_init(
   
   if (info_.hardware_parameters.count("pid_p") > 0)
   {
-    cfg_.pid_p = std::stoi(info_.hardware_parameters["pid_p"]);
-    cfg_.pid_d = std::stoi(info_.hardware_parameters["pid_d"]);
-    cfg_.pid_i = std::stoi(info_.hardware_parameters["pid_i"]);
-    cfg_.pid_o = std::stoi(info_.hardware_parameters["pid_o"]);
+    cfg_.pid_p = std::stod(info_.hardware_parameters["pid_p"]);
+    cfg_.pid_d = std::stod(info_.hardware_parameters["pid_d"]);
+    cfg_.pid_i = std::stod(info_.hardware_parameters["pid_i"]);
+    cfg_.pid_o = std::stod(info_.hardware_parameters["pid_o"]);
   }
   else
   {
     RCLCPP_INFO(rclcpp::get_logger("JamBotNanoHardware"), "PID values not supplied, using defaults.");
   }
+
+  if (info_.hardware_parameters.count("verbose_telemetry") > 0)
+  {
+    verbose_telemetry_ = info_.hardware_parameters["verbose_telemetry"] == "true";
+  }
+  comms_.set_verbose_telemetry(verbose_telemetry_);
 
   wheel_l_.setup(cfg_.left_wheel_name, cfg_.enc_counts_per_rev);
   wheel_r_.setup(cfg_.right_wheel_name, cfg_.enc_counts_per_rev);
@@ -232,7 +238,7 @@ hardware_interface::CallbackReturn JamBotNanoHardware::on_activate(
   {
     return hardware_interface::CallbackReturn::ERROR;
   }
-  if (cfg_.pid_p > 0)
+  if (cfg_.pid_p > 0.0)
   {
     comms_.set_pid_values(cfg_.pid_p, cfg_.pid_d, cfg_.pid_i, cfg_.pid_o);
   }
@@ -297,6 +303,17 @@ hardware_interface::return_type JamBotNanoHardware::read(
   pos_prev = wheel_r_.pos_;
   wheel_r_.pos_ = wheel_r_.calc_enc_angle();
   wheel_r_.vel_ = (wheel_r_.pos_ - pos_prev) / delta_seconds;
+
+  if (verbose_telemetry_) {
+    // Off by default (see the "verbose_telemetry" hardware parameter): real
+    // diagnostic value while chasing a control-loop issue, real log spam at
+    // 20Hz otherwise.
+    RCLCPP_INFO(
+      rclcpp::get_logger("JamBotNanoHardware"),
+      "raw enc_1=%d enc_2=%d | wheel_l pos=%.3f vel=%.3f cmd=%.3f | wheel_r pos=%.3f vel=%.3f cmd=%.3f | errors=%d",
+      enc_1, enc_2, wheel_l_.pos_, wheel_l_.vel_, wheel_l_.cmd_,
+      wheel_r_.pos_, wheel_r_.vel_, wheel_r_.cmd_, comms_.consecutive_errors());
+  }
 
   battery_voltage_ = battery_raw;
 

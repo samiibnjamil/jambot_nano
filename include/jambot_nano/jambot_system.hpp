@@ -53,10 +53,10 @@ struct Config
   int baud_rate = 0;
   int timeout_ms = 0;
   int enc_counts_per_rev = 0;
-  int pid_p = 0;
-  int pid_d = 0;
-  int pid_i = 0;
-  int pid_o = 0;
+  double pid_p = 0.0;
+  double pid_d = 0.0;
+  double pid_i = 0.0;
+  double pid_o = 0.0;
 };
 
 
@@ -109,6 +109,10 @@ private:
   Wheel wheel_l_;
   Wheel wheel_r_;
   double battery_voltage_ = 0.0;  // Battery voltage state
+  // Off by default; set the "verbose_telemetry" hardware parameter to true
+  // to log every read()/write() cycle's firmware state -- useful while
+  // chasing a control-loop issue, log spam at 20Hz otherwise.
+  bool verbose_telemetry_ = false;
   rclcpp::Node::SharedPtr io_node_;
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr buzzer_sub_;
   rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr led_sub_;

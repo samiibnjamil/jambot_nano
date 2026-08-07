@@ -37,24 +37,22 @@ jambot_base_controller:
     linear.x.has_velocity_limits: true
     linear.x.has_acceleration_limits: true
     linear.x.has_jerk_limits: false
-    # Reverted from 0.7/2.0 (max_velocity/max_acceleration): that more
-    # aggressive ramp, combined with the firmware's own setpoint ramp,
-    # produced unstable/oscillating motor behavior when driven live
-    # through diff_drive_controller (though it looked fine in isolated
-    # raw-serial step tests -- the two ramps compounding under real
-    # non-RT loop timing is the likely cause).
-    linear.x.max_velocity: 0.4
-    linear.x.min_velocity: -0.4
-    linear.x.max_acceleration: 1.0
+    # Matches controller_node's FAST speed mode (1.0 m/s). Raising this
+    # alone doesn't make the robot go faster than commanded -- it's a
+    # ceiling, not a default -- but it must be >= the highest speed mode
+    # or diff_drive_controller silently clips FAST below its intended value.
+    linear.x.max_velocity: 1.0
+    linear.x.min_velocity: -1.0
+    linear.x.max_acceleration: 2.0
     linear.x.max_jerk: 0.0
     linear.x.min_jerk: 0.0
 
     angular.z.has_velocity_limits: true
     angular.z.has_acceleration_limits: true
     angular.z.has_jerk_limits: false
-    angular.z.max_velocity: 2.0
-    angular.z.min_velocity: -2.0
-    angular.z.max_acceleration: 10.0
-    angular.z.min_acceleration: -10.0
+    angular.z.max_velocity: 3.5
+    angular.z.min_velocity: -3.5
+    angular.z.max_acceleration: 15.0
+    angular.z.min_acceleration: -15.0
     angular.z.max_jerk: 0.0
     angular.z.min_jerk: 0.0

@@ -13,10 +13,21 @@
         <param name="baud_rate">115200</param>
         <param name="timeout_ms">100</param>
         <param name="enc_counts_per_rev">404</param>
-        <param name="pid_p">20</param>
-        <param name="pid_d">12</param>
-        <param name="pid_i">0</param>
-        <param name="pid_o">50</param>
+        <!-- Order is Kp Kd Ki Ko. MUST match the firmware speed-PID gains.
+             Previous values 20/12/0/50 came from another driver's PID scaling
+             and are wrong here (Kp 33x high, Kd 12000x high, and Ko=50 scales
+             the PID output in applyMotorSpeed so anything nonzero saturates to
+             +/-255), which caused a full scale forward/reverse limit cycle on
+             every launch. Harmless only while the firmware 'p' handler was a
+             no-op; re-enabling live tuning exposed them. -->
+        <param name="pid_p">0.6</param>
+        <param name="pid_d">0.001</param>
+        <param name="pid_i">1.7</param>
+        <param name="pid_o">1.0</param>
+        <!-- Set to "true" to log every read/write cycle's firmware state
+             (encoders, PID target, PWM, filtered speed) at 20Hz, which is
+             useful while debugging the control loop but log spam otherwise. -->
+        <param name="verbose_telemetry">false</param>
       </hardware>
       <joint name="${prefix}left_wheel_joint">
         <command_interface name="velocity"/>

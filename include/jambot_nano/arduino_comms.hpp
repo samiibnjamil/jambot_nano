@@ -34,14 +34,21 @@ public:
     float &ax, float &ay, float &az, float &gx, float &gy, float &gz,
     float &battery_voltage);
   void reset_encoders();
-  void set_pid_values(int k_p, int k_d, int k_i, int k_o);
+  // Gains are fractional (e.g. Kp=0.6, Ki=1.7, Kd=0.001) -- these were int,
+  // which truncated a real gain set to "0 1 0" and silently destroyed the loop.
+  void set_pid_values(double k_p, double k_d, double k_i, double k_o);
   int consecutive_errors() const;
+  // Off by default: logs the full firmware telemetry line every read()
+  // cycle (20Hz) -- real value while chasing a control-loop bug, real log
+  // spam otherwise. Toggle with the "verbose_telemetry" hardware parameter.
+  void set_verbose_telemetry(bool enabled) { verbose_telemetry_ = enabled; }
 
 private:
   LibSerial::BaudRate convert_baud_rate(int baud_rate);
   LibSerial::SerialPort serial_conn_;
   int timeout_ms_;
   int consecutive_errors_ = 0;
+  bool verbose_telemetry_ = false;
 };
 
 } // namespace jambot_nano
