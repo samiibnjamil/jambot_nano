@@ -24,6 +24,7 @@
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/int32_multi_array.hpp"
@@ -172,6 +173,39 @@ hardware_interface::CallbackReturn JamBotNanoHardware::on_configure(
 
   io_node_ = rclcpp::Node::make_shared("jambot_hardware_io");
   imu_pub_ = io_node_->create_publisher<sensor_msgs::msg::Imu>("/imu/data_raw", 10);
+
+  // Live PID tuning via standard ROS2 parameters (ros2 param set/get/list,
+  // rqt_reconfigure) rather than a bespoke service or topic -- gains are
+  // tunable runtime configuration, which parameters are the idiomatic
+  // mechanism for. Declared with the URDF-configured values (or the
+  // firmware's own defaults if none were supplied) so `ros2 param get`
+  // reflects what's actually running. Actual serial write happens in
+  // write(), matching the buzzer/LED pending-flag pattern -- keeps all
+  // serial I/O confined to the RT read/write thread instead of the
+  // parameter callback's (arbitrary) thread.
+  pid_p_ = cfg_.pid_p > 0.0 ? cfg_.pid_p : 0.6;
+  pid_d_ = cfg_.pid_p > 0.0 ? cfg_.pid_d : 0.001;
+  pid_i_ = cfg_.pid_p > 0.0 ? cfg_.pid_i : 1.7;
+  pid_o_ = cfg_.pid_p > 0.0 ? cfg_.pid_o : 1.0;
+  io_node_->declare_parameter("pid_p", pid_p_.load());
+  io_node_->declare_parameter("pid_d", pid_d_.load());
+  io_node_->declare_parameter("pid_i", pid_i_.load());
+  io_node_->declare_parameter("pid_o", pid_o_.load());
+  pid_param_cb_handle_ = io_node_->add_on_set_parameters_callback(
+    [this](const std::vector<rclcpp::Parameter> & params) {
+      rcl_interfaces::msg::SetParametersResult result;
+      result.successful = true;
+      for (const auto & p : params) {
+        if (p.get_name() == "pid_p") pid_p_.store(p.as_double());
+        else if (p.get_name() == "pid_d") pid_d_.store(p.as_double());
+        else if (p.get_name() == "pid_i") pid_i_.store(p.as_double());
+        else if (p.get_name() == "pid_o") pid_o_.store(p.as_double());
+        else continue;
+        pid_cmd_pending_.store(true);
+      }
+      return result;
+    });
+
   buzzer_sub_ = io_node_->create_subscription<std_msgs::msg::Int32>(
     "/jambot/buzzer_mode",
     10,
@@ -389,6 +423,10 @@ hardware_interface::return_type JamBotNanoHardware::write(
       rclcpp::get_logger("JamBotNanoHardware"),
       "Sent LED command: r=%d g=%d b=%d",
       red, green, blue);
+  }
+  if (pid_cmd_pending_.exchange(false))
+  {
+    comms_.set_pid_values(pid_p_.load(), pid_d_.load(), pid_i_.load(), pid_o_.load());
   }
 
   comms_.set_motor_values(wheel_l_.cmd_, wheel_r_.cmd_);

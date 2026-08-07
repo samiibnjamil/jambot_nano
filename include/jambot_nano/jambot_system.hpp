@@ -123,6 +123,15 @@ private:
   std::atomic<int> led_g_{0};
   std::atomic<int> led_b_{0};
   std::atomic<bool> led_cmd_pending_{false};
+  // Live PID tuning via ros2 param set (see on_configure()). All four are
+  // sent together on any change since the firmware's 'p' command requires
+  // a full Kp/Kd/Ki/Ko set, not a partial update.
+  std::atomic<double> pid_p_{0.0};
+  std::atomic<double> pid_d_{0.0};
+  std::atomic<double> pid_i_{0.0};
+  std::atomic<double> pid_o_{0.0};
+  std::atomic<bool> pid_cmd_pending_{false};
+  rclcpp::Node::OnSetParametersCallbackHandle::SharedPtr pid_param_cb_handle_;
 };
 
 }  // namespace jambot_nano
