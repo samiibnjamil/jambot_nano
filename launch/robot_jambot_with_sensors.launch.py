@@ -16,6 +16,7 @@ def _build_actions(_context):
     enable_control = LaunchConfiguration("enable_control")
     enable_rviz = LaunchConfiguration("enable_rviz")
     enable_slam = LaunchConfiguration("enable_slam")
+    enable_camera = LaunchConfiguration("enable_camera")
     enable_camera_flip = (
         LaunchConfiguration("enable_camera_flip").perform(_context).lower() == "true"
     )
@@ -42,6 +43,7 @@ def _build_actions(_context):
             name="camera_node",
             output="screen",
             remappings=[("~/image_raw", "/camera_node/image_raw_orig")],
+            condition=IfCondition(enable_camera),
         )
         camera_flip_node = Node(
             package="image_rotate",
@@ -59,6 +61,7 @@ def _build_actions(_context):
                     "output_frame_id": "camera_flipped",
                 }
             ],
+            condition=IfCondition(enable_camera),
         )
     else:
         camera_node = Node(
@@ -66,6 +69,7 @@ def _build_actions(_context):
             executable="camera_node",
             name="camera_node",
             output="screen",
+            condition=IfCondition(enable_camera),
         )
         camera_flip_node = None
 
@@ -173,9 +177,19 @@ def generate_launch_description():
                 description="Start slam_toolbox and use /odometry/filtered as odom input",
             ),
             DeclareLaunchArgument(
+                "enable_camera",
+                default_value="false",
+                description=(
+                    "Start camera_ros (and image_flip_node, if "
+                    "enable_camera_flip). Off by default -- the CSI camera "
+                    "pipeline is a noticeable CPU cost on the Pi, only pay "
+                    "it when you're actually using the camera."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "enable_camera_flip",
                 default_value="true",
-                description="Rotate camera image via image_flip_node",
+                description="Rotate camera image via image_flip_node (only matters if enable_camera:=true)",
             ),
             DeclareLaunchArgument(
                 "camera_rotation_steps",
