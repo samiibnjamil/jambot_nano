@@ -288,11 +288,18 @@ hardware_interface::return_type JamBotNanoHardware::read(
   comms_.read_telemetry(
     enc_1, enc_2, imu_ok, ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw, battery_raw);
 
-  // Firmware returns encoder counts in opposite wheel order.
-  // Swap assignment so odometry yaw sign matches real turns.
-  // Correct encoder polarity so forward physical motion is +X in odometry.
-  wheel_r_.enc_ = -enc_1;
-  wheel_l_.enc_ = -enc_2;
+  // motor1 = physical LEFT, motor2 = physical RIGHT, both spin their own
+  // wheel forward on a positive command -- confirmed by direct isolation
+  // test (m 60 0 / m 0 60, physically observed which wheel moved and
+  // which way) and independently by the fact the PID converges cleanly
+  // to every positive target all session (a wrong-sign feedback loop
+  // would run away, not converge). So no swap, no negation: each wheel's
+  // reported position comes straight from its own motor's encoder. The
+  // previous "wheel_r_ = -enc_1, wheel_l_ = -enc_2" was both the wrong
+  // wheel and the wrong sign -- likely a stale compensation for an
+  // earlier wiring state that no longer applies. See docs/jambot-known-issues.md.
+  wheel_l_.enc_ = enc_1;
+  wheel_r_.enc_ = enc_2;
 
   double delta_seconds = period.seconds();
 
