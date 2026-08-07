@@ -1,0 +1,33 @@
+# Example waypoint mission for jambot_nano
+# Coordinates are in the map frame (meters), theta is in degrees
+
+waypoints:
+  # Start position
+  - name: "start"
+    x: 0.0
+    y: 0.0
+    theta_deg: 0.0
+
+  # Move forward
+  - name: "forward_1m"
+    x: 1.0
+    y: 0.0
+    theta_deg: 0.0
+
+  # Turn and move left
+  - name: "left_1m"
+    x: 1.0
+    y: 1.0
+    theta_deg: 90.0
+
+  # Move back
+  - name: "back_1m"
+    x: 0.0
+    y: 1.0
+    theta_deg: 180.0
+
+  # Return to start
+  - name: "home"
+    x: 0.0
+    y: 0.0
+    theta_deg: 270.0
