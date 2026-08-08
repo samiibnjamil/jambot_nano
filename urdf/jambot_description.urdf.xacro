@@ -40,11 +40,16 @@
   <link name="${prefix}base_footprint">
   </link>
 
-  <!-- Chassis -->
+  <!-- Chassis. Drive wheels are at the robot's front (base_link x=0, the
+       most-forward feature); the body trails behind them. rpy=0 here (no
+       rotation relative to base_link) so every child of chassis inherits
+       base_link's own orientation directly, with no compensating rotation
+       needed on camera_joint or laser_joint below. Negative x offset places
+       the box behind the wheel axle instead of ahead of it. -->
   <joint name="${prefix}chassis_joint" type="fixed">
     <parent link="${prefix}base_link"/>
     <child link="${prefix}chassis"/>
-    <origin xyz="${wheel_offset_x} 0 ${-wheel_offset_z}" rpy="0 0 ${PI}"/>
+    <origin xyz="${-wheel_offset_x} 0 ${-wheel_offset_z}" rpy="0 0 0"/>
   </joint>
 
   <link name="${prefix}chassis">
@@ -189,16 +194,17 @@
 
   <link name="${prefix}imu_link"/>
 
-  <!-- Lidar. Net yaw here is PI (chassis is itself rotated PI from
-       base_link, so a PI here previously summed to 0). Measured live by
-       driving forward, the 0 deg scan range grew while the 180 deg range
-       shrank, even as wheel odometry and the EKF both correctly integrated
-       positive forward motion, so the unit is mounted with its zero angle
-       facing the robot's rear, not its front. -->
+  <!-- Lidar, rpy yaw=PI. Measured live by driving forward, the 0 deg scan
+       range grew while the 180 deg range shrank, even as wheel odometry and
+       the EKF both correctly integrated positive forward motion, so the
+       unit is mounted with its zero angle facing the robot's rear, not its
+       front. Now that chassis_joint carries no rotation, this PI is the
+       full net yaw relative to base_link (previously it had to be split
+       across both joints). -->
   <joint name="${prefix}laser_joint" type="fixed">
     <parent link="${prefix}chassis"/>
     <child link="${prefix}laser_frame"/>
-    <origin xyz="0.085 0 0.105" rpy="0 0 0"/>
+    <origin xyz="0.085 0 0.105" rpy="0 0 ${PI}"/>
   </joint>
 
   <link name="${prefix}laser_frame">
