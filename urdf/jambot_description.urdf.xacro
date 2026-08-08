@@ -189,11 +189,16 @@
 
   <link name="${prefix}imu_link"/>
 
-  <!-- Lidar -->
+  <!-- Lidar. Net yaw here is PI (chassis is itself rotated PI from
+       base_link, so a PI here previously summed to 0). Measured live by
+       driving forward, the 0 deg scan range grew while the 180 deg range
+       shrank, even as wheel odometry and the EKF both correctly integrated
+       positive forward motion, so the unit is mounted with its zero angle
+       facing the robot's rear, not its front. -->
   <joint name="${prefix}laser_joint" type="fixed">
     <parent link="${prefix}chassis"/>
     <child link="${prefix}laser_frame"/>
-    <origin xyz="0.085 0 0.105" rpy="0 0 ${PI}"/>
+    <origin xyz="0.085 0 0.105" rpy="0 0 0"/>
   </joint>
 
   <link name="${prefix}laser_frame">

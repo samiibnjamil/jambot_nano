@@ -107,10 +107,25 @@ def _build_actions(_context):
 
     try:
         ydlidar_share = get_package_share_directory("ydlidar_ros2_driver")
-        lidar_launch = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(ydlidar_share, "launch", "ydlidar_launch.py")
-            )
+        # Launching the driver node directly instead of including the
+        # vendor's ydlidar_launch.py: that file also starts its own
+        # static_transform_publisher hardcoding base_link -> laser_frame at
+        # identity rotation, which permanently overrides (in every
+        # listener's TF buffer, since it starts after robot_state_publisher)
+        # the real chassis -> laser_frame transform this package's own URDF
+        # provides. Measured live: base_link->laser_frame stayed at the
+        # vendor's [0,0,0.02]/identity no matter what the URDF said, so scan
+        # position/orientation fixes in jambot_description.urdf.xacro were
+        # silently discarded. Dropping just that one action, keeping
+        # everything else identical to the vendor launch file.
+        lidar_launch = LifecycleNode(
+            package="ydlidar_ros2_driver",
+            executable="ydlidar_ros2_driver_node",
+            name="ydlidar_ros2_driver_node",
+            output="screen",
+            emulate_tty=True,
+            parameters=[os.path.join(ydlidar_share, "params", "ydlidar.yaml")],
+            namespace="/",
         )
         # Delayed, not launched immediately alongside robot_launch: opening
         # the Arduino's serial port resets the board, and its setup() runs a
