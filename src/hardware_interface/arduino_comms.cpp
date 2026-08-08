@@ -379,6 +379,19 @@ bool ArduinoComms::read_telemetry(
 {
   std::string response = send_msg("t\n\r");
   constexpr int kMaxLines = 6;
+  // Retries after the first line use a much shorter timeout than the
+  // shared timeout_ms_ (100ms). This loop runs inline inside read(), which
+  // controller_manager expects to complete well within its 50ms (20Hz)
+  // cycle -- at 100ms per retry, even ONE resync attempt already blows
+  // that budget twice over. Measured live during real (motor-noise-heavy)
+  // driving: read() cycles intermittently took 145-325ms, which throttled
+  // the effective control rate down to 3-7Hz and caused
+  // diff_drive_controller to drop cmd_vel commands as stale (see
+  // cmd_vel_timeout in jambot_controllers.yaml). A valid line at 115200
+  // baud only takes ~9ms to arrive once the firmware starts sending it, so
+  // 20ms per retry is generous for a genuine resync while capping the
+  // worst case (6 retries) at 120ms instead of 600ms.
+  constexpr int kRetryTimeoutMs = 20;
   for (int i = 0; i < kMaxLines; ++i) {
     if (parse_telemetry_response(response, enc_1, enc_2, imu_ok, ax, ay, az, gx, gy, gz, battery_voltage)) {
       if (verbose_telemetry_) {
@@ -390,7 +403,7 @@ bool ArduinoComms::read_telemetry(
       return true;
     }
     try {
-      serial_conn_.ReadLine(response, '\n', timeout_ms_);
+      serial_conn_.ReadLine(response, '\n', kRetryTimeoutMs);
     } catch (const LibSerial::ReadTimeout &) {
       break;
     }

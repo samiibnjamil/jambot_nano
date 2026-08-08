@@ -18,18 +18,23 @@ class TriggerControlNode : public rclcpp::Node
 {
 public:
     // SLOW/NORMAL/FAST top linear.x speeds, in m/s. Must stay <= the
-    // controller's max_velocity in jambot_controllers.yaml (currently 1.0)
+    // controller's max_velocity in jambot_controllers.yaml (currently 0.35)
     // or diff_drive_controller will clip FAST silently below the intended cap.
+    // Cut sharply (was 0.5/0.75/1.0) per live testing feedback: 1.0 m/s FAST
+    // was uncontrollably fast for manual driving.
     static constexpr std::array<SpeedMode, 3> kSpeedModes{{
-        {"SLOW", 0.5f},
-        {"NORMAL", 0.75f},
-        {"FAST", 1.0f},
+        {"SLOW", 0.1f},
+        {"NORMAL", 0.2f},
+        {"FAST", 0.35f},
     }};
 
     TriggerControlNode() : Node("trigger_control_node"),
                            speed_mode_index_(1),  // start in NORMAL
                            current_linear_speed_(kSpeedModes[1].mps),
-                           current_angular_speed_(3.5)
+                           // Bumped from 3.5 per live testing feedback: turning
+                           // felt too slow relative to the (now much lower)
+                           // linear speed.
+                           current_angular_speed_(4.5)
     {
         publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/jambot_base_controller/cmd_vel", 10);
         buzzer_pub_ = this->create_publisher<std_msgs::msg::Int32>("/jambot/buzzer_mode", 10);
@@ -127,7 +132,7 @@ private:
         float dpad_vertical = get_axis_or_zero(msg, 7);
 
         constexpr float kMinAngularSpeed = 0.40f;
-        constexpr float kMaxAngularSpeed = 3.50f;
+        constexpr float kMaxAngularSpeed = 4.50f;
 
         // Discrete speed modes rather than continuous fine-adjustment: dpad
         // up/down steps between them. Values are top linear.x speed in m/s,

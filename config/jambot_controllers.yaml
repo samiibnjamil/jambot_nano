@@ -27,7 +27,15 @@ jambot_base_controller:
     twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
     open_loop: false
     enable_odom_tf: false
-    cmd_vel_timeout: 0.5
+    # Bumped from 0.5s: live testing showed read()/write() cycles
+    # intermittently blocking 145-325ms (see kRetryTimeoutMs in
+    # arduino_comms.cpp, now also fixed), which was enough to make
+    # diff_drive_controller drop joystick commands as "too old" and leave
+    # the robot barely responding. 1.0s covers that jitter with margin
+    # without fully giving up the timeout's job of stopping the robot if
+    # commands actually stop arriving (a real, if small, safety tradeoff --
+    # don't raise this further without a reason).
+    cmd_vel_timeout: 1.0
     use_stamped_vel: true
 
     #experimental
@@ -37,28 +45,31 @@ jambot_base_controller:
     linear.x.has_velocity_limits: true
     linear.x.has_acceleration_limits: true
     linear.x.has_jerk_limits: false
-    # Matches controller_node's FAST speed mode (1.0 m/s). Raising this
-    # alone doesn't make the robot go faster than commanded -- it's a
-    # ceiling, not a default -- but it must be >= the highest speed mode
-    # or diff_drive_controller silently clips FAST below its intended value.
-    linear.x.max_velocity: 1.0
-    linear.x.min_velocity: -1.0
-    linear.x.max_acceleration: 2.0
+    # Matches controller_node's FAST speed mode (0.35 m/s, cut sharply from
+    # 1.0 per live testing -- it was uncontrollably fast for manual driving).
+    # Raising this alone doesn't make the robot go faster than commanded --
+    # it's a ceiling, not a default -- but it must be >= the highest speed
+    # mode or diff_drive_controller silently clips FAST below its intended
+    # value.
+    linear.x.max_velocity: 0.35
+    linear.x.min_velocity: -0.35
+    linear.x.max_acceleration: 0.7
     linear.x.max_jerk: 0.0
     linear.x.min_jerk: 0.0
 
     angular.z.has_velocity_limits: true
     angular.z.has_acceleration_limits: true
     angular.z.has_jerk_limits: false
-    # Must be >= controller_node's kMaxAngularSpeed (3.5 rad/s) or
+    # Must be >= controller_node's kMaxAngularSpeed (4.5 rad/s, bumped from
+    # 3.5 per live testing -- turning felt slow relative to linear speed) or
     # diff_drive_controller silently clips turning commands below what the
-    # joystick asked for. Do not raise this without checking it's actually
-    # achievable: 30 rad/s would need ~729 RPM/wheel at this robot's wheel
-    # geometry, above even the firmware's own 600 RPM safety clamp
+    # joystick asked for. Do not raise this further without checking it's
+    # actually achievable: 30 rad/s would need ~729 RPM/wheel at this robot's
+    # wheel geometry, above even the firmware's own 600 RPM safety clamp
     # (see kMaxSafeRpm in arduino_comms.cpp).
-    angular.z.max_velocity: 3.5
-    angular.z.min_velocity: -3.5
-    angular.z.max_acceleration: 15.0
-    angular.z.min_acceleration: -15.0
+    angular.z.max_velocity: 4.5
+    angular.z.min_velocity: -4.5
+    angular.z.max_acceleration: 19.0
+    angular.z.min_acceleration: -19.0
     angular.z.max_jerk: 0.0
     angular.z.min_jerk: 0.0
