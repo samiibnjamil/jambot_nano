@@ -29,7 +29,7 @@ public:
     TriggerControlNode() : Node("trigger_control_node"),
                            speed_mode_index_(1),  // start in NORMAL
                            current_linear_speed_(kSpeedModes[1].mps),
-                           current_angular_speed_(1.20)
+                           current_angular_speed_(3.5)
     {
         publisher_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("/jambot_base_controller/cmd_vel", 10);
         buzzer_pub_ = this->create_publisher<std_msgs::msg::Int32>("/jambot/buzzer_mode", 10);
@@ -127,7 +127,7 @@ private:
         float dpad_vertical = get_axis_or_zero(msg, 7);
 
         constexpr float kMinAngularSpeed = 0.40f;
-        constexpr float kMaxAngularSpeed = 2.50f;
+        constexpr float kMaxAngularSpeed = 3.50f;
 
         // Discrete speed modes rather than continuous fine-adjustment: dpad
         // up/down steps between them. Values are top linear.x speed in m/s,

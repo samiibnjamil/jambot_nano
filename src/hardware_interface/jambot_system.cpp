@@ -319,31 +319,51 @@ hardware_interface::return_type JamBotNanoHardware::read(
   float gy_raw = 0.0f;
   float gz_raw = 0.0f;
   float battery_raw = 0.0f;
-  comms_.read_telemetry(
+  const bool telemetry_ok = comms_.read_telemetry(
     enc_1, enc_2, imu_ok, ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw, battery_raw);
-
-  // motor1 = physical LEFT, motor2 = physical RIGHT, both spin their own
-  // wheel forward on a positive command -- confirmed by direct isolation
-  // test (m 60 0 / m 0 60, physically observed which wheel moved and
-  // which way) and independently by the fact the PID converges cleanly
-  // to every positive target all session (a wrong-sign feedback loop
-  // would run away, not converge). So no swap, no negation: each wheel's
-  // reported position comes straight from its own motor's encoder. The
-  // previous "wheel_r_ = -enc_1, wheel_l_ = -enc_2" was both the wrong
-  // wheel and the wrong sign -- likely a stale compensation for an
-  // earlier wiring state that no longer applies. See docs/jambot-known-issues.md.
-  wheel_l_.enc_ = enc_1;
-  wheel_r_.enc_ = enc_2;
 
   double delta_seconds = period.seconds();
 
-  double pos_prev = wheel_l_.pos_;
-  wheel_l_.pos_ = wheel_l_.calc_enc_angle();
-  wheel_l_.vel_ = (wheel_l_.pos_ - pos_prev) / delta_seconds;
+  if (telemetry_ok)
+  {
+    consecutive_telemetry_failures_ = 0;
 
-  pos_prev = wheel_r_.pos_;
-  wheel_r_.pos_ = wheel_r_.calc_enc_angle();
-  wheel_r_.vel_ = (wheel_r_.pos_ - pos_prev) / delta_seconds;
+    // motor1 = physical LEFT, motor2 = physical RIGHT, both spin their own
+    // wheel forward on a positive command -- confirmed by direct isolation
+    // test (m 60 0 / m 0 60, physically observed which wheel moved and
+    // which way) and independently by the fact the PID converges cleanly
+    // to every positive target all session (a wrong-sign feedback loop
+    // would run away, not converge). So no swap, no negation: each wheel's
+    // reported position comes straight from its own motor's encoder. The
+    // previous "wheel_r_ = -enc_1, wheel_l_ = -enc_2" was both the wrong
+    // wheel and the wrong sign -- likely a stale compensation for an
+    // earlier wiring state that no longer applies. See docs/jambot-known-issues.md.
+    wheel_l_.enc_ = enc_1;
+    wheel_r_.enc_ = enc_2;
+
+    double pos_prev = wheel_l_.pos_;
+    wheel_l_.pos_ = wheel_l_.calc_enc_angle();
+    wheel_l_.vel_ = (wheel_l_.pos_ - pos_prev) / delta_seconds;
+
+    pos_prev = wheel_r_.pos_;
+    wheel_r_.pos_ = wheel_r_.calc_enc_angle();
+    wheel_r_.vel_ = (wheel_r_.pos_ - pos_prev) / delta_seconds;
+
+    battery_voltage_ = battery_raw;
+  }
+  else
+  {
+    // A garbled/unparseable telemetry line (USB glitch, boot-time noise):
+    // hold the last known wheel position and battery reading instead of
+    // snapping encoder counts to 0, which would otherwise spike velocity
+    // for one cycle straight into /joint_states -> odom -> EKF -> SLAM.
+    // ArduinoComms::read_telemetry already logs the raw line. imu_ok stays
+    // false from read_telemetry's own initialization, so the IMU publish
+    // block below already skips this cycle correctly.
+    wheel_l_.vel_ = 0.0;
+    wheel_r_.vel_ = 0.0;
+    ++consecutive_telemetry_failures_;
+  }
 
   if (verbose_telemetry_) {
     // Off by default (see the "verbose_telemetry" hardware parameter): real
@@ -351,12 +371,11 @@ hardware_interface::return_type JamBotNanoHardware::read(
     // 20Hz otherwise.
     RCLCPP_INFO(
       rclcpp::get_logger("JamBotNanoHardware"),
-      "raw enc_1=%d enc_2=%d | wheel_l pos=%.3f vel=%.3f cmd=%.3f | wheel_r pos=%.3f vel=%.3f cmd=%.3f | errors=%d",
-      enc_1, enc_2, wheel_l_.pos_, wheel_l_.vel_, wheel_l_.cmd_,
-      wheel_r_.pos_, wheel_r_.vel_, wheel_r_.cmd_, comms_.consecutive_errors());
+      "raw enc_1=%d enc_2=%d ok=%d | wheel_l pos=%.3f vel=%.3f cmd=%.3f | wheel_r pos=%.3f vel=%.3f cmd=%.3f | link_errors=%d telemetry_failures=%d",
+      enc_1, enc_2, telemetry_ok, wheel_l_.pos_, wheel_l_.vel_, wheel_l_.cmd_,
+      wheel_r_.pos_, wheel_r_.vel_, wheel_r_.cmd_, comms_.consecutive_errors(),
+      consecutive_telemetry_failures_);
   }
-
-  battery_voltage_ = battery_raw;
 
   if (imu_pub_ && imu_ok && std::isfinite(ax_raw) && std::isfinite(ay_raw) && std::isfinite(az_raw) &&
       std::isfinite(gx_raw) && std::isfinite(gy_raw) && std::isfinite(gz_raw))
@@ -379,12 +398,13 @@ hardware_interface::return_type JamBotNanoHardware::read(
     imu_pub_->publish(imu_msg);
   }
 
-  if (comms_.consecutive_errors() >= kMaxConsecutiveSerialErrors)
+  if (comms_.consecutive_errors() >= kMaxConsecutiveSerialErrors ||
+      consecutive_telemetry_failures_ >= kMaxConsecutiveSerialErrors)
   {
     RCLCPP_ERROR(
       rclcpp::get_logger("JamBotNanoHardware"),
-      "Serial link unresponsive after %d consecutive errors",
-      comms_.consecutive_errors());
+      "Serial link unresponsive: link_errors=%d telemetry_failures=%d",
+      comms_.consecutive_errors(), consecutive_telemetry_failures_);
     return hardware_interface::return_type::ERROR;
   }
 

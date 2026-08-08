@@ -2,7 +2,7 @@ import os
 
 from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction, TimerAction
 from launch.actions import IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -112,7 +112,19 @@ def _build_actions(_context):
                 os.path.join(ydlidar_share, "launch", "ydlidar_launch.py")
             )
         )
-        actions.append(lidar_launch)
+        # Delayed, not launched immediately alongside robot_launch: opening
+        # the Arduino's serial port resets the board, and its setup() runs a
+        # one-shot MPU6050 gyro/accel calibration that discards any round
+        # where the sensor looks like it moved. Measured on real hardware,
+        # the spinning LIDAR motor alone -- mechanically coupled through the
+        # chassis -- is enough to blow that motion guard by 10-50x (raw gyro
+        # spread ~1100-5300 vs a threshold of 100), so starting the LIDAR at
+        # the same time as the hardware interface made calibration fail on
+        # essentially every boot ("motion detected throughout, skipped").
+        # 12s comfortably clears the measured ~5s worst-case firmware boot
+        # window plus this launch's own process-startup latency before the
+        # LIDAR motor spins up.
+        actions.append(TimerAction(period=12.0, actions=[lidar_launch]))
     except PackageNotFoundError:
         actions.append(
             LogInfo(

@@ -190,13 +190,16 @@ void ArduinoComms::connect(const std::string &serial_device, int32_t baud_rate, 
   }
   serial_conn_.SetBaudRate(convert_baud_rate(baud_rate));
 
-  // Opening the port toggles DTR, which resets the Arduino. Its setup()
-  // (including the MPU6050 init's own 1s stabilization delay) takes a
-  // couple seconds to complete; without waiting here, the first several
-  // reads race the bootloader/setup() and return garbage or nothing,
-  // which can trip the consecutive-error watchdog before the board has
-  // even finished booting.
-  std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+  // Opening the port toggles DTR, which resets the Arduino. setup() now
+  // includes the MPU6050 auto-calibration loop (up to ~6 iterations, each
+  // sampling 105 readings) on top of the bootloader handshake and the 1s
+  // stabilization delay; measured end-to-end boot time (reset -> "ready")
+  // on real hardware is ~5.05s worst case. Without waiting comfortably
+  // past that here, the first several reads race the bootloader/setup()
+  // and return garbage or nothing, which trips the consecutive-error
+  // watchdog before the board has even finished booting -- exactly what
+  // happened when this was still 2500ms.
+  std::this_thread::sleep_for(std::chrono::milliseconds(6000));
   serial_conn_.FlushIOBuffers();
   consecutive_errors_ = 0;
 }

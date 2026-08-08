@@ -149,6 +149,9 @@ void updateRampDown();
 void updateBuzzerPattern();
 void updateLightPattern();
 void applyLightStep(int patternId, int step);
+bool lightPattern(const char* pattern);
+void recoverI2CBus();
+void calibrateMPU6050();
 void sendTelemetry();
 
 
@@ -159,13 +162,15 @@ void sendTelemetry();
 
 
 void setup() {
+  // Must come first: initMPU6050()/calibrateMPU6050() print status over
+  // Serial, and writes to an unconfigured UART are silently dropped on AVR.
+  Serial.begin(115200);
   setupEncoders();
   setupMotorDriver();
   setupBuzzerLED();
   currentLedState = LED_BOOTING;
   setRGBColor(0, 0, 1);  // Show boot-in-progress immediately.
   initMPU6050();
-  Serial.begin(115200);
   lastDataReceivedTime = millis();
   lastMotionCommandTime = millis();
   initializePIDControllers();
@@ -179,7 +184,7 @@ void loop() {
   updateBuzzerPattern();
   updateLightPattern();
   if (pidEnabled) {
-    speedPID(0);  // Compute PID outputs
+    speedPID();  // Compute PID outputs
   }
   processMotorCommands();
   //testSin();
@@ -197,9 +202,47 @@ void setupBuzzerLED() {
   digitalWrite(MLED, HIGH);
   digitalWrite(YLED, HIGH);
 }
+// If the board resets while the MPU6050 is mid-transaction on I2C (e.g.
+// interrupted by a reflash or a DTR-triggered reset while it was being
+// polled), the sensor can be left holding SDA low waiting for clock
+// pulses that never come -- Wire.begin() alone does not clear this.
+// Manually toggling SCL is the standard I2C bus-recovery sequence: it lets
+// a wedged slave finish its current byte, then a bit-banged STOP condition
+// releases the bus before the Wire library takes over the pins.
+void recoverI2CBus() {
+  pinMode(MPU_SDA, INPUT_PULLUP);
+  pinMode(MPU_SCL, OUTPUT);
+  for (int i = 0; i < 9 && digitalRead(MPU_SDA) == LOW; i++) {
+    digitalWrite(MPU_SCL, LOW);
+    delayMicroseconds(5);
+    digitalWrite(MPU_SCL, HIGH);
+    delayMicroseconds(5);
+  }
+  pinMode(MPU_SDA, OUTPUT);
+  digitalWrite(MPU_SDA, LOW);
+  delayMicroseconds(5);
+  digitalWrite(MPU_SCL, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(MPU_SDA, HIGH);
+  delayMicroseconds(5);
+}
+
 void initMPU6050() {
+  Wire.begin();
+  recoverI2CBus();
   mpu.initialize();
-  if (mpu.testConnection()) {
+
+  // Retry with a short settling delay: on some boots the sensor's own
+  // power-on stabilization hasn't finished by the time the Arduino (which
+  // boots fast) is ready to talk to it over I2C.
+  bool ok = mpu.testConnection();
+  for (int attempt = 0; attempt < 4 && !ok; attempt++) {
+    delay(50);
+    mpu.initialize();
+    ok = mpu.testConnection();
+  }
+
+  if (ok) {
     Serial.println("MPU6050 connection successful");
     imuReady = true;
   } else {
@@ -208,6 +251,130 @@ void initMPU6050() {
     imuReady = false;
   }
   delay(1000);  // Give the sensor some time to stabilize
+
+  if (imuReady) {
+    calibrateMPU6050();
+    Serial.println("MPU6050 calibrated");
+  }
+}
+
+// Iteratively zeroes accel/gyro bias so raw output reads ~0 on all gyro
+// axes and ~1g (kOneGAccel) on accel Z at rest -- an uncalibrated gyro
+// bias of tens to hundreds of LSB otherwise gets integrated by the host
+// EKF into steady heading drift.
+//
+// Two guards keep a bad boot condition from being baked in as a false
+// "hardware" bias:
+//  - Motion check: gyro bias is only meaningful if the robot was actually
+//    still while sampling. Each round tracks the min/max raw gyro reading;
+//    if the spread exceeds kGyroMotionThreshold, the robot moved (or is
+//    vibrating) and that round is discarded rather than averaged in.
+//  - Level check: unlike gyro, accel bias is orientation-dependent -- we
+//    can only tell a hardware offset apart from gravity leaking onto X/Y
+//    if the robot is roughly level to begin with. If ax/ay average out
+//    larger than kMaxLevelTilt, accel calibration is skipped entirely
+//    (offsets stay at the library default of 0) rather than treating a
+//    tilted power-on as a Z-axis hardware bias.
+void calibrateMPU6050() {
+  const int kSamplesPerIteration = 100;
+  const int kDiscardSamples = 5;
+  const int kMaxIterations = 6;
+  const int kAccelDeadzone = 8;         // LSB, convergence tolerance
+  const int kGyroDeadzone = 1;          // LSB, convergence tolerance
+  const long kOneGAccel = 16384;        // LSB at the library's default +-2g range
+  // Measured live on this exact board/mounting (ros2 topic echo /imu/data_raw
+  // while genuinely at rest, motors and LIDAR off): raw gyro spread over a
+  // few seconds sits around 190-260 LSB, well above the old 100 LSB
+  // threshold -- so the guard was rejecting every single round even at
+  // rest, meaning calibration never actually completed and offsets stayed
+  // at 0. 400 gives margin over that intrinsic noise floor while still
+  // sitting far below real motion/vibration (LIDAR motor spinning alone
+  // pushed spread to 1100-5300 LSB in the same test).
+  const int kGyroMotionThreshold = 400; // LSB spread within a round => robot moved
+  const long kMaxLevelTilt = 1000;      // LSB on ax/ay => robot isn't level enough to trust
+
+  mpu.setXAccelOffset(0);
+  mpu.setYAccelOffset(0);
+  mpu.setZAccelOffset(0);
+  mpu.setXGyroOffset(0);
+  mpu.setYGyroOffset(0);
+  mpu.setZGyroOffset(0);
+
+  long axOffset = 0, ayOffset = 0, azOffset = 0;
+  long gxOffset = 0, gyOffset = 0, gzOffset = 0;
+  bool calibrateAccel = true;
+  bool anyRoundAccepted = false;
+
+  for (int iter = 0; iter < kMaxIterations; iter++) {
+    int16_t ax, ay, az, gx, gy, gz;
+    long axSum = 0, aySum = 0, azSum = 0, gxSum = 0, gySum = 0, gzSum = 0;
+    // long, not int16_t: the kGyroMotionThreshold comparisons below need
+    // wider-than-16-bit subtraction so a large spread can't wrap around
+    // and slip past the motion guard.
+    long gxMin = 32767, gxMax = -32768;
+    long gyMin = 32767, gyMax = -32768;
+    long gzMin = 32767, gzMax = -32768;
+
+    for (int i = 0; i < kSamplesPerIteration + kDiscardSamples; i++) {
+      mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+      if (i >= kDiscardSamples) {
+        axSum += ax; aySum += ay; azSum += az;
+        gxSum += gx; gySum += gy; gzSum += gz;
+        gxMin = min(gxMin, gx); gxMax = max(gxMax, gx);
+        gyMin = min(gyMin, gy); gyMax = max(gyMax, gy);
+        gzMin = min(gzMin, gz); gzMax = max(gzMax, gz);
+      }
+      delay(2);
+    }
+
+    if ((gxMax - gxMin) > kGyroMotionThreshold ||
+        (gyMax - gyMin) > kGyroMotionThreshold ||
+        (gzMax - gzMin) > kGyroMotionThreshold) {
+      // Robot moved (or is vibrating) during sampling -- discard this
+      // round rather than averaging a motion artifact into the bias.
+      continue;
+    }
+    anyRoundAccepted = true;
+
+    long axMean = axSum / kSamplesPerIteration;
+    long ayMean = aySum / kSamplesPerIteration;
+    long azMean = azSum / kSamplesPerIteration - kOneGAccel;
+    long gxMean = gxSum / kSamplesPerIteration;
+    long gyMean = gySum / kSamplesPerIteration;
+    long gzMean = gzSum / kSamplesPerIteration;
+
+    if (calibrateAccel && (abs(axMean) > kMaxLevelTilt || abs(ayMean) > kMaxLevelTilt)) {
+      calibrateAccel = false;
+      Serial.println("MPU6050 calibration: not level, skipping accel offsets");
+    }
+
+    if (calibrateAccel) {
+      axOffset -= axMean / 8;
+      ayOffset -= ayMean / 8;
+      azOffset -= azMean / 8;
+      mpu.setXAccelOffset(axOffset);
+      mpu.setYAccelOffset(ayOffset);
+      mpu.setZAccelOffset(azOffset);
+    }
+
+    gxOffset -= gxMean / 4;
+    gyOffset -= gyMean / 4;
+    gzOffset -= gzMean / 4;
+    mpu.setXGyroOffset(gxOffset);
+    mpu.setYGyroOffset(gyOffset);
+    mpu.setZGyroOffset(gzOffset);
+
+    bool accelConverged = !calibrateAccel ||
+        (abs(axMean) <= kAccelDeadzone && abs(ayMean) <= kAccelDeadzone && abs(azMean) <= kAccelDeadzone);
+    bool gyroConverged = abs(gxMean) <= kGyroDeadzone && abs(gyMean) <= kGyroDeadzone && abs(gzMean) <= kGyroDeadzone;
+    if (accelConverged && gyroConverged) {
+      break;
+    }
+  }
+
+  if (!anyRoundAccepted) {
+    Serial.println("MPU6050 calibration: motion detected throughout, skipped");
+  }
 }
 
 
@@ -258,7 +425,7 @@ void testSin() {
   prevT = currT;
 }
 
-void speedPID(int printFlag) {
+void speedPID() {
   static unsigned long lastTime = 0;
   if (millis() - lastTime >= 50) {
     long encoder1Snapshot = 0;
@@ -290,24 +457,6 @@ void speedPID(int printFlag) {
   }
 
   applyMotorSpeed(constrain((int)(outputPWM1 * Ko), -255, 255), constrain((int)(outputPWM2 * Ko), -255, 255));
-
-  if (printFlag == 1) {
-    static unsigned long lastPrintTime = 0;
-    if (millis() - lastPrintTime >= 100) {
-      Serial.print(targetRPM1);
-      Serial.print("\t");  // Tab separation
-      //Serial.print(motor1Speed);
-      //Serial.print("\t");
-      Serial.print(v1Filt);
-      Serial.print("\t");
-      Serial.print(targetRPM2);
-      Serial.print("\t");
-      Serial.println(v2Filt);
-      // Serial.print("\t");
-      //Serial.println(motor2Speed);  // Newline at the end
-      lastPrintTime = millis();
-    }
-  }
 }
 
 
@@ -391,7 +540,16 @@ void processMotorCommands() {
         }
       case 'l':
         {
-          // Update the RGB LED color
+          // "l <name>" starts/stops a timed pattern (breathing/flashing/fading/off).
+          if (tokenCount == 2) {
+            if (lightPattern(tokens[1])) {
+              Serial.println("OK");
+            } else {
+              Serial.println("ERR bad args");
+            }
+            break;
+          }
+          // "l <r> <g> <b>" sets a static color and cancels any running pattern.
           long red = 0;
           long green = 0;
           long blue = 0;
@@ -400,6 +558,7 @@ void processMotorCommands() {
               Serial.println("ERR range");
               break;
             }
+            activeLightPattern = 0;
             setRGBColor((int)red, (int)green, (int)blue);
             currentColor = {(int)red, (int)green, (int)blue};  // Store color
             Serial.println("OK");
@@ -719,6 +878,16 @@ void updateRampDown() {
 
 // New LED control functions ====================================
 void updateLedState() {
+  if (activeLightPattern != 0) {
+    // Safety indicators always win: never let a light show mask a
+    // disconnect or low-battery warning.
+    if (currentLedState == LED_DISCONNECTED || currentLedState == LED_LOW_BATTERY) {
+      activeLightPattern = 0;
+    } else {
+      return;  // updateLightPattern() owns the hardware while a pattern runs
+    }
+  }
+
   switch(currentLedState) {
     case LED_BOOTING:
       setRGBColor(0, 0, 1);
@@ -849,8 +1018,11 @@ void setRGBColor(int red, int green, int blue) {
     digitalWrite(MLED, magenta);
     digitalWrite(YLED, yellow);
 
-    // Store color unless in override state
-    if (currentLedState == LED_CONNECTED) {
+    // Store color unless in override state -- while a light pattern is
+    // running, applyLightStep() drives this with transient pattern frames,
+    // not a user-requested color, so don't let those overwrite what should
+    // be restored once the pattern stops.
+    if (currentLedState == LED_CONNECTED && activeLightPattern == 0) {
       currentColor = {red, green, blue};
     }
   }
@@ -1103,26 +1275,33 @@ void updateBuzzerPattern() {
   }
 }
 
-// Function to implement different light patterns
-void lightPattern(String pattern) {
-  activeLightPattern = 0;
+// Starts (or stops) a timed light pattern. Returns false for an
+// unrecognized name so the caller can report "ERR bad args" instead of
+// silently doing something the host didn't ask for.
+bool lightPattern(const char* pattern) {
+  int newPattern;
+  if (strcmp(pattern, "breathing") == 0) {
+    newPattern = 1;
+  } else if (strcmp(pattern, "flashing") == 0) {
+    newPattern = 2;
+  } else if (strcmp(pattern, "fading") == 0) {
+    newPattern = 3;
+  } else if (strcmp(pattern, "off") == 0 || strcmp(pattern, "stop") == 0) {
+    newPattern = 0;
+  } else {
+    return false;
+  }
+
+  activeLightPattern = newPattern;
   lightStepIndex = 0;
   lightRepeatCount = 0;
   lastLightStepTime = 0;
-
-  if (pattern == "breathing") {
-    activeLightPattern = 1;
+  if (newPattern == 0) {
+    // Stopping a pattern restores the color it interrupted, not whatever
+    // frame the pattern happened to be showing when it stopped.
+    setRGBColor(currentColor.r, currentColor.g, currentColor.b);
   }
-  else if (pattern == "flashing") {
-    activeLightPattern = 2;
-  }
-  else if (pattern == "fading") {
-    activeLightPattern = 3;
-  }
-  else {
-    // Default: Set to solid white (all LEDs on)
-    setRGBColor(1, 1, 1);  // All LEDs on
-  }
+  return true;
 }
 
 void updateLightPattern() {
@@ -1146,6 +1325,9 @@ void updateLightPattern() {
     activeLightPattern = 0;
     lightStepIndex = 0;
     lightRepeatCount = 0;
+    // Restore the color the pattern interrupted rather than leaving the
+    // LED on whatever frame the pattern last rendered.
+    setRGBColor(currentColor.r, currentColor.g, currentColor.b);
   }
 }
 

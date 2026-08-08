@@ -109,6 +109,10 @@ private:
   Wheel wheel_l_;
   Wheel wheel_r_;
   double battery_voltage_ = 0.0;  // Battery voltage state
+  // Counts consecutive read() cycles where the firmware's telemetry line
+  // couldn't be parsed (distinct from comms_.consecutive_errors(), which
+  // only tracks link-level write/read failures) -- see kMaxConsecutiveSerialErrors.
+  int consecutive_telemetry_failures_ = 0;
   // Off by default; set the "verbose_telemetry" hardware parameter to true
   // to log every read()/write() cycle's firmware state -- useful while
   // chasing a control-loop issue, log spam at 20Hz otherwise.

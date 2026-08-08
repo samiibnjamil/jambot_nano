@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jambot Arduino Test Console</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>jambot Test Console</h1>
+  <span><span class="status-dot" id="statusDot"></span><span id="statusText">Disconnected</span></span>
+  <button id="stopBtn" title="Immediately sends m 0 0">■ STOP</button>
+</header>
+
+<div class="warning-banner">
+  Only one process can own the serial port at a time. Stop the ROS2 hardware interface (or any other node
+  talking to the Arduino) before connecting here. This page has no login and is reachable by anyone on your
+  network -- only run it somewhere you trust.
+</div>
+
+<main>
+
+  <!-- Connection -->
+  <section class="panel">
+    <h2>Connection</h2>
+    <div class="row">
+      <label>Port</label>
+      <select id="portSelect"></select>
+      <button id="refreshPortsBtn">⟳</button>
+    </div>
+    <div class="row">
+      <label>or type</label>
+      <input type="text" id="portManual" placeholder="/dev/ttyUSB0">
+    </div>
+    <div class="row">
+      <label>Baud</label>
+      <input type="number" id="baudInput" value="115200">
+    </div>
+    <div class="row">
+      <button id="connectBtn" class="primary">Connect</button>
+      <button id="disconnectBtn" disabled>Disconnect</button>
+    </div>
+    <div class="row">
+      <label>Poll every</label>
+      <input type="number" id="pollIntervalInput" value="100" style="width:70px"> ms
+    </div>
+  </section>
+
+  <!-- Battery / Encoders / IMU -->
+  <section class="panel">
+    <h2>Battery / Encoders / IMU</h2>
+    <div class="row">
+      <label>Battery</label>
+      <div class="gauge-wrap">
+        <div class="gauge-track"><div class="gauge-fill" id="batteryFill"></div></div>
+        <span class="readout" id="batteryLabel">-- V</span>
+      </div>
+      <button class="needs-connection" id="readBatteryBtn" disabled>Read</button>
+    </div>
+    <div class="row">
+      <label>Encoders</label>
+      <span class="readout" id="encReadout">-- / --</span>
+      <button class="needs-connection" id="readEncodersBtn" disabled>Read</button>
+      <button class="needs-connection" id="resetEncodersBtn" disabled>Reset</button>
+    </div>
+    <div class="row">
+      <label>IMU</label>
+      <span class="readout" id="imuReadout">--</span>
+      <button class="needs-connection" id="readImuBtn" disabled>Read</button>
+    </div>
+  </section>
+
+  <!-- PID live status -->
+  <section class="panel">
+    <h2>PID Status (live)</h2>
+    <div class="row"><label>Target RPM</label><span class="readout" id="targetReadout">-- / --</span></div>
+    <div class="row"><label>Actual RPM</label><span class="readout" id="actualReadout">-- / --</span></div>
+    <div class="row"><label>PWM</label><span class="readout" id="pwmReadout">-- / --</span></div>
+    <div class="row"><label>Flags</label><span class="readout" id="pidFlagsReadout">--</span></div>
+    <div class="row"><button class="needs-connection" id="togglePidBtn" disabled>Toggle PID Enable (x)</button></div>
+  </section>
+
+  <!-- Motor control -->
+  <section class="panel">
+    <h2>Motor Control</h2>
+    <div class="row"><strong>Raw PWM (-255..255)</strong></div>
+    <div class="row">
+      <label>Motor 1</label>
+      <input type="range" id="pwm1Slider" min="-255" max="255" value="0" class="needs-connection" disabled>
+      <input type="number" id="pwm1Num" min="-255" max="255" value="0" style="width:60px">
+    </div>
+    <div class="row">
+      <label>Motor 2</label>
+      <input type="range" id="pwm2Slider" min="-255" max="255" value="0" class="needs-connection" disabled>
+      <input type="number" id="pwm2Num" min="-255" max="255" value="0" style="width:60px">
+    </div>
+    <div class="row">
+      <button class="needs-connection" id="applyPwmBtn" disabled>Apply (o)</button>
+      <button class="needs-connection danger" id="stopPwmBtn" disabled>Stop</button>
+    </div>
+
+    <div class="row"><strong>Closed-loop RPM</strong></div>
+    <div class="row">
+      <label>Max RPM</label>
+      <input type="number" id="maxRpmInput" value="300" style="width:70px">
+    </div>
+    <div class="row">
+      <label>Motor 1</label>
+      <input type="range" id="rpm1Slider" min="-300" max="300" value="0" class="needs-connection" disabled>
+      <input type="number" id="rpm1Num" min="-600" max="600" value="0" style="width:60px">
+    </div>
+    <div class="row">
+      <label>Motor 2</label>
+      <input type="range" id="rpm2Slider" min="-300" max="300" value="0" class="needs-connection" disabled>
+      <input type="number" id="rpm2Num" min="-600" max="600" value="0" style="width:60px">
+    </div>
+    <div class="row">
+      <button class="needs-connection" id="applyRpmBtn" disabled>Apply (m)</button>
+      <button class="needs-connection danger" id="stopRpmBtn" disabled>Stop</button>
+    </div>
+  </section>
+
+  <!-- LED -->
+  <section class="panel">
+    <h2>Lights</h2>
+    <div class="row"><strong>Static color (each channel is on/off)</strong></div>
+    <div class="row">
+      <label><input type="checkbox" id="ledR"> R</label>
+      <label><input type="checkbox" id="ledG"> G</label>
+      <label><input type="checkbox" id="ledB"> B</label>
+      <button class="needs-connection" id="applyColorBtn" disabled>Set (l r g b)</button>
+    </div>
+    <div class="row">
+      <button class="needs-connection swatch" data-preset="0,0,0" style="background:#000" disabled title="Off"></button>
+      <button class="needs-connection swatch" data-preset="1,0,0" style="background:#f00" disabled title="Red"></button>
+      <button class="needs-connection swatch" data-preset="0,1,0" style="background:#0f0" disabled title="Green"></button>
+      <button class="needs-connection swatch" data-preset="0,0,1" style="background:#00f" disabled title="Blue"></button>
+      <button class="needs-connection swatch" data-preset="1,1,0" style="background:#ff0" disabled title="Yellow"></button>
+      <button class="needs-connection swatch" data-preset="0,1,1" style="background:#0ff" disabled title="Cyan"></button>
+      <button class="needs-connection swatch" data-preset="1,0,1" style="background:#f0f" disabled title="Magenta"></button>
+      <button class="needs-connection swatch" data-preset="1,1,1" style="background:#fff" disabled title="White"></button>
+    </div>
+    <div class="row"><strong>Patterns</strong></div>
+    <div class="row">
+      <button class="needs-connection" data-pattern="breathing" disabled>Breathing</button>
+      <button class="needs-connection" data-pattern="flashing" disabled>Flashing</button>
+      <button class="needs-connection" data-pattern="fading" disabled>Fading</button>
+      <button class="needs-connection" data-pattern="off" disabled>Off</button>
+    </div>
+    <div class="row"><strong>Autonomous mode indicator</strong></div>
+    <div class="row">
+      <button class="needs-connection" id="autonomousOnBtn" disabled>Autonomous ON (a 1)</button>
+      <button class="needs-connection" id="autonomousOffBtn" disabled>Autonomous OFF (a 0)</button>
+    </div>
+  </section>
+
+  <!-- Buzzer -->
+  <section class="panel">
+    <h2>Buzzer</h2>
+    <div class="row" id="buzzerButtons">
+      <button class="needs-connection" data-buzz="0" disabled>Off</button>
+      <button class="needs-connection" data-buzz="1" disabled>1 Beep</button>
+      <button class="needs-connection" data-buzz="2" disabled>2 Double</button>
+      <button class="needs-connection" data-buzz="3" disabled>3 Triple</button>
+      <button class="needs-connection" data-buzz="4" disabled>4 Short+Pause</button>
+      <button class="needs-connection" data-buzz="5" disabled>5 Pattern</button>
+      <button class="needs-connection" data-buzz="6" disabled>6 Slow</button>
+      <button class="needs-connection" data-buzz="7" disabled>7 Rapid</button>
+      <button class="needs-connection" data-buzz="8" disabled>8 Long</button>
+    </div>
+  </section>
+
+  <!-- PID tuning -->
+  <section class="panel">
+    <h2>PID Tuning</h2>
+    <div class="row">
+      <label>Kp</label>
+      <input type="range" id="kpSlider" min="0" max="5" step="0.001" value="0.6">
+      <input type="number" id="kpNum" value="0.6" step="0.001" style="width:80px">
+    </div>
+    <div class="row">
+      <label>Kd</label>
+      <input type="range" id="kdSlider" min="0" max="1" step="0.0001" value="0.001">
+      <input type="number" id="kdNum" value="0.001" step="0.0001" style="width:80px">
+    </div>
+    <div class="row">
+      <label>Ki</label>
+      <input type="range" id="kiSlider" min="0" max="5" step="0.001" value="1.7">
+      <input type="number" id="kiNum" value="1.7" step="0.001" style="width:80px">
+    </div>
+    <div class="row">
+      <label>Ko</label>
+      <input type="range" id="koSlider" min="0" max="2" step="0.01" value="1.0">
+      <input type="number" id="koNum" value="1.0" step="0.01" style="width:80px">
+    </div>
+    <div class="row">
+      <button class="needs-connection" id="applyPidBtn" disabled>Apply live (p) -- lost on reset</button>
+    </div>
+    <div class="row">
+      <button id="savePidFlashBtn">Save to Firmware &amp; Flash</button>
+    </div>
+  </section>
+
+  <!-- PID autotune -->
+  <section class="panel wide">
+    <h2>PID Autotune (Relay Feedback)</h2>
+    <div class="row" style="color:var(--text-dim); font-size:12px;">
+      Astrom-Hagglund relay-feedback identification -- the describing-function method behind essentially
+      every commercial auto-tuning PID controller. Toggles raw PWM between +/-relay around the setpoint to
+      induce a limit-cycle oscillation, measures its period/amplitude to get the ultimate gain Ku directly
+      (no process model needed), then derives gains via two rules: Ziegler-Nichols (classic, more
+      aggressive) and Tyreus-Luyben (detuned specifically for relay-identified Ku/Pu -- the safer default
+      on real hardware). Runs open-loop with PID disabled; both motors spin together the whole time,
+      so give the robot room to move or put it up on a stand.
+    </div>
+    <div class="row">
+      <label>Setpoint</label><input type="number" id="atSetpoint" value="100" style="width:70px"> rpm
+      <label>Relay +/-</label><input type="number" id="atRelayPwm" value="80" max="150" style="width:70px"> pwm
+      <label>Max duration</label><input type="number" id="atDuration" value="10" max="30" style="width:70px"> s
+    </div>
+    <div class="row">
+      <button id="atStartBtn" class="primary needs-connection" disabled>Start Autotune</button>
+      <button id="atStopBtn" class="danger" disabled>Abort</button>
+      <span class="readout" id="atStatus">idle</span>
+    </div>
+    <canvas id="atChart" style="width:100%;height:160px;background:#0a0c0f;border:1px solid var(--panel-border);border-radius:5px;"></canvas>
+    <div id="atLog" class="log-box" style="height:140px;"></div>
+    <div class="row" id="atResults" style="display:none; margin-top:8px;">
+      <div style="width:100%">
+        <div class="row"><strong>Identified:</strong> <span class="readout" id="atIdentified">--</span></div>
+        <div class="row"><span class="readout" id="atAppliedStatus"></span></div>
+        <div class="grid2">
+          <div>
+            <div class="row"><strong>Ziegler-Nichols</strong></div>
+            <div class="row readout" id="atZnValues">--</div>
+            <button id="atUseZn">Use these values</button>
+            <button id="atFlashZn">Save &amp; Flash with these</button>
+          </div>
+          <div>
+            <div class="row"><strong>Tyreus-Luyben (recommended, auto-applied live)</strong></div>
+            <div class="row readout" id="atTlValues">--</div>
+            <button id="atUseTl">Use these values</button>
+            <button id="atFlashTl" class="primary">Save &amp; Flash with these</button>
+          </div>
+        </div>
+        <div class="row" style="color:var(--text-dim); font-size:12px;">
+          The Tyreus-Luyben set is applied live automatically when the tune finishes (RAM only, lost on
+          reset). "Use these values" fills in the PID Tuning fields above without applying anything.
+          "Save &amp; Flash" writes the values into the sketch source and reflashes -- makes them the
+          permanent power-on default.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PID test + graph -->
+  <section class="panel wide">
+    <h2>PID Test &amp; Live Graph</h2>
+    <canvas id="pidChart"></canvas>
+    <div class="legend" id="chartLegend">
+      <label><input type="checkbox" data-series="target1" checked><span class="swatch-sm" style="background:#4fc3f7"></span>Target RPM1</label>
+      <label><input type="checkbox" data-series="actual1" checked><span class="swatch-sm" style="background:#0288d1"></span>Actual RPM1</label>
+      <label><input type="checkbox" data-series="target2" checked><span class="swatch-sm" style="background:#ffb74d"></span>Target RPM2</label>
+      <label><input type="checkbox" data-series="actual2" checked><span class="swatch-sm" style="background:#f57c00"></span>Actual RPM2</label>
+      <label><input type="checkbox" data-series="pwm1"><span class="swatch-sm" style="background:#81c784"></span>PWM1</label>
+      <label><input type="checkbox" data-series="pwm2"><span class="swatch-sm" style="background:#aed581"></span>PWM2</label>
+      <label>Window <input type="number" id="chartWindowInput" value="20" style="width:50px">s</label>
+    </div>
+
+    <div class="grid2" style="margin-top:14px">
+      <div>
+        <div class="row"><strong>Step test</strong></div>
+        <div class="row"><label>RPM1</label><input type="number" id="stepRpm1" value="150" style="width:70px"></div>
+        <div class="row"><label>RPM2</label><input type="number" id="stepRpm2" value="150" style="width:70px"></div>
+        <div class="row"><label>Duration</label><input type="number" id="stepDuration" value="3" style="width:70px"> s</div>
+        <div class="row">
+          <button class="needs-connection" id="runStepTestBtn" disabled>Run Step</button>
+          <button class="needs-connection" id="stopStepTestBtn" disabled>Stop</button>
+        </div>
+      </div>
+      <div>
+        <div class="row"><strong>Sine test</strong></div>
+        <div class="row"><label>Amplitude</label><input type="number" id="sineAmplitude" value="100" style="width:70px"> rpm</div>
+        <div class="row"><label>Period</label><input type="number" id="sinePeriod" value="4" style="width:70px"> s</div>
+        <div class="row"><label>Duration</label><input type="number" id="sineDuration" value="10" style="width:70px"> s</div>
+        <div class="row">
+          <button class="needs-connection" id="runSineTestBtn" disabled>Run Sine</button>
+          <button class="needs-connection" id="stopSineTestBtn" disabled>Stop</button>
+        </div>
+        <div class="row"><label>Sending</label><span class="readout" id="sineReadout">-- / --</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Joystick -->
+  <section class="panel wide">
+    <h2>Joystick Control</h2>
+    <div class="grid2">
+      <div>
+        <div class="row">
+          <label>Input</label>
+          <label><input type="radio" name="inputSource" value="gamepad" id="inputSourceGamepad" checked> Physical gamepad</label>
+          <label><input type="radio" name="inputSource" value="onscreen" id="inputSourceOnscreen"> On-screen joystick</label>
+        </div>
+        <div class="row"><label>Gamepad</label><span class="readout" id="gamepadName">(none) -- press a button on it to connect</span></div>
+        <div class="row"><label>Enable</label><input type="checkbox" id="joyEnable"> drives the robot when checked</div>
+        <div class="row">
+          <label>Drive via</label>
+          <label><input type="radio" name="joyMode" value="serial" id="joyModeSerial" checked> Direct serial (m rpm1 rpm2)</label>
+          <label><input type="radio" name="joyMode" value="ros2" id="joyModeRos2"> ROS2 cmd_vel</label>
+        </div>
+        <div class="row" id="joySerialParams"><label>Max RPM</label><input type="number" id="joyMaxRpm" value="200" style="width:70px"></div>
+        <div class="row" id="joyRos2Params" style="display:none">
+          <label>Max linear</label><input type="number" id="joyMaxLinear" value="0.2" step="0.01" style="width:70px"> m/s
+          <label>Max angular</label><input type="number" id="joyMaxAngular" value="1.5" step="0.1" style="width:70px"> rad/s
+        </div>
+        <div id="gamepadAxisConfig">
+          <div class="row"><label>Throttle axis</label>
+            <select id="throttleAxisSelect">
+              <option value="1" selected>axis 1 (left stick Y)</option>
+              <option value="0">axis 0 (left stick X)</option>
+              <option value="2">axis 2 (right stick X)</option>
+              <option value="3">axis 3 (right stick Y)</option>
+            </select>
+            <label><input type="checkbox" id="invertThrottle" checked> invert</label>
+          </div>
+          <div class="row"><label>Turn axis</label>
+            <select id="turnAxisSelect">
+              <option value="0" selected>axis 0 (left stick X)</option>
+              <option value="1">axis 1 (left stick Y)</option>
+              <option value="2">axis 2 (right stick X)</option>
+              <option value="3">axis 3 (right stick Y)</option>
+            </select>
+          </div>
+          <div class="row" style="color:var(--text-dim); font-size:12px;">
+            If a Bluetooth gamepad doesn't show up: press any button on it while this tab is focused
+            (the browser only detects it on activity), and make sure it's actually paired at the OS level first.
+          </div>
+        </div>
+        <div class="row"><label>Sending</label><span class="readout" id="joyReadout">-- / --</span></div>
+        <div class="row"><label><input type="checkbox" id="logJoystick"> log every joystick command (noisy)</label></div>
+        <div class="row">
+          <label>Raw axes</label>
+          <div style="flex:1">
+            <div class="axis-bar-track"><div class="axis-bar-fill" id="axisBar0"></div></div>
+            <div class="axis-bar-track"><div class="axis-bar-fill" id="axisBar1"></div></div>
+            <div class="axis-bar-track"><div class="axis-bar-fill" id="axisBar2"></div></div>
+            <div class="axis-bar-track"><div class="axis-bar-fill" id="axisBar3"></div></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <canvas id="stickCanvas" width="220" height="220"></canvas>
+        <div class="row" style="color:var(--text-dim); font-size:12px;">
+          Shows the current stick position either way. In "On-screen joystick" mode, drag directly on it --
+          it self-centers to zero on release.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ROS2 mode -->
+  <section class="panel wide">
+    <h2>ROS2 Mode</h2>
+    <div class="row" style="color:var(--text-dim); font-size:12px;">
+      Launches the real ros2_control stack (controller_manager, diff_drive_controller, etc.) so the board
+      is driven the way it normally runs -- not via this tool's direct serial protocol. Launching
+      automatically disconnects the Connection panel above (ros2_control needs exclusive access to the
+      Arduino); while ROS2 mode is running, Connect is blocked here.
+    </div>
+    <div class="row">
+      <label>Status</label><span class="readout" id="ros2Status">stopped</span>
+    </div>
+    <div class="row">
+      <label>Launch file</label>
+      <select id="ros2LaunchFile">
+        <option value="robot_jambot.launch.py">robot_jambot.launch.py (core control stack)</option>
+        <option value="robot_jambot_with_sensors.launch.py">robot_jambot_with_sensors.launch.py (+ lidar/camera/slam)</option>
+      </select>
+    </div>
+    <div class="row" id="ros2ArgsCore">
+      <label><input type="checkbox" id="ros2EnableEkf" checked> enable_ekf</label>
+    </div>
+    <div class="row" id="ros2ArgsSensors" style="display:none">
+      <label><input type="checkbox" id="ros2EnableControl"> enable_control</label>
+      <label><input type="checkbox" id="ros2EnableRviz"> enable_rviz</label>
+      <label><input type="checkbox" id="ros2EnableSlam"> enable_slam</label>
+      <label><input type="checkbox" id="ros2EnableCamera"> enable_camera</label>
+    </div>
+    <div class="row">
+      <button id="ros2LaunchBtn" class="primary">Launch</button>
+      <button id="ros2StopBtn" class="danger">Stop</button>
+    </div>
+    <div id="ros2Log" class="log-box"></div>
+
+    <div class="row" style="margin-top:12px"><strong>Manual cmd_vel</strong></div>
+    <div class="row">
+      <label>Linear x</label>
+      <input type="range" id="cmdVelLinearSlider" min="-0.5" max="0.5" step="0.01" value="0">
+      <input type="number" id="cmdVelLinearNum" min="-2" max="2" step="0.01" value="0" style="width:70px"> m/s
+    </div>
+    <div class="row">
+      <label>Angular z</label>
+      <input type="range" id="cmdVelAngularSlider" min="-2" max="2" step="0.01" value="0">
+      <input type="number" id="cmdVelAngularNum" min="-10" max="10" step="0.01" value="0" style="width:70px"> rad/s
+    </div>
+    <div class="row">
+      <button id="cmdVelApplyBtn">Publish</button>
+      <button id="cmdVelStopBtn" class="danger">Stop</button>
+    </div>
+  </section>
+
+  <!-- Lidar -->
+  <section class="panel wide">
+    <h2>Lidar (YDLidar via ROS2 /scan)</h2>
+    <div class="row">
+      <label>Status</label><span class="readout" id="lidarStatus">--</span>
+      <label>Max range</label><input type="number" id="lidarMaxRange" value="6" step="0.5" style="width:70px"> m
+    </div>
+    <canvas id="lidarCanvas" width="320" height="320"
+      style="background:#0a0c0f;border:1px solid var(--panel-border);border-radius:6px;max-width:100%"></canvas>
+    <div class="row" style="color:var(--text-dim); font-size:12px; margin-top:6px;">
+      Independent of the Arduino connection above -- reads the ydlidar_ros2_driver's /scan topic directly.
+      Needs the lidar driver running (e.g. robot_jambot_with_sensors.launch.py) and this tool launched with
+      the ROS2 workspace sourced.
+    </div>
+  </section>
+
+  <!-- Firmware upload -->
+  <section class="panel wide">
+    <h2>Firmware Upload</h2>
+    <div class="row">
+      <label>Sketch</label>
+      <select id="sketchSelect"></select>
+      <label>Board</label>
+      <select id="fqbnSelect"></select>
+      <button id="uploadBtn" class="primary">Compile &amp; Upload</button>
+    </div>
+    <div class="row" style="color:var(--text-dim); font-size:12px;">
+      Uses the port selected in the Connection panel. Uploading releases and (if it was open) reconnects the
+      serial connection automatically.
+    </div>
+    <div id="uploadLog"></div>
+  </section>
+
+  <!-- Serial monitor -->
+  <section class="panel wide">
+    <h2>Serial Monitor</h2>
+    <div id="consoleOutput"></div>
+    <form id="monitorForm" class="row" style="margin-top:8px">
+      <input type="text" id="monitorInput" placeholder="type a raw command, e.g. m 100 100" style="flex:1">
+      <button type="submit" class="primary">Send</button>
+      <label><input type="checkbox" id="autoscroll" checked> autoscroll</label>
+      <button type="button" id="clearConsoleBtn">Clear</button>
+    </form>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

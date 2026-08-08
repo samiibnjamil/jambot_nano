@@ -50,6 +50,12 @@ jambot_base_controller:
     angular.z.has_velocity_limits: true
     angular.z.has_acceleration_limits: true
     angular.z.has_jerk_limits: false
+    # Must be >= controller_node's kMaxAngularSpeed (3.5 rad/s) or
+    # diff_drive_controller silently clips turning commands below what the
+    # joystick asked for. Do not raise this without checking it's actually
+    # achievable: 30 rad/s would need ~729 RPM/wheel at this robot's wheel
+    # geometry, above even the firmware's own 600 RPM safety clamp
+    # (see kMaxSafeRpm in arduino_comms.cpp).
     angular.z.max_velocity: 3.5
     angular.z.min_velocity: -3.5
     angular.z.max_acceleration: 15.0
