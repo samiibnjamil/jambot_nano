@@ -441,10 +441,20 @@ void speedPID() {
     motor1Speed = (motor1Pulses * 1200.0) / CPR;
     motor2Speed = (motor2Pulses * 1200.0) / CPR;
 
-    // Apply Low-Pass Filter to RPM 25hz cukoff
-    v1Filt = 0.854 * v1Filt + 0.0728 * motor1Speed + 0.0728 * v1Prev;
+    // Low-pass filter on the measured RPM fed to the PID. The old
+    // coefficients (0.854/0.0728/0.0728) claimed a "25Hz cutoff", which is
+    // impossible below this loop's own 20Hz (50ms) sample rate (Nyquist
+    // limit is 10Hz); the actual time constant they gave was ~317ms, ~950ms
+    // to settle. That produced a "still turning a full second after a
+    // straight command" symptom -- the PID was correcting toward a
+    // feedback signal that lagged the true speed by nearly a second,
+    // regardless of PID gains. New coefficients target a ~75ms time
+    // constant (a = exp(-dt/tau), dt=0.05s, tau=0.075s), still rejecting
+    // encoder-count quantization noise but tracking real speed changes in
+    // ~1-2 control cycles instead of ~19.
+    v1Filt = 0.5 * v1Filt + 0.25 * motor1Speed + 0.25 * v1Prev;
     v1Prev = motor1Speed;
-    v2Filt = 0.854 * v2Filt + 0.0728 * motor2Speed + 0.0728 * v2Prev;
+    v2Filt = 0.5 * v2Filt + 0.25 * motor2Speed + 0.25 * v2Prev;
     v2Prev = motor2Speed;
 
 

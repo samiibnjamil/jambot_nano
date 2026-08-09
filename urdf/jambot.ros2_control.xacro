@@ -22,7 +22,11 @@
              no-op; re-enabling live tuning exposed them. -->
         <param name="pid_p">0.6</param>
         <param name="pid_d">0.001</param>
-        <param name="pid_i">1.7</param>
+        <!-- Lowered from 1.7, live-tested to reduce integral-windup
+             overshoot at the turn-to-straight transition. See speedPID's
+             filter fix in jambot.ino for the primary cause of that
+             symptom; this is a secondary contributor. -->
+        <param name="pid_i">0.85</param>
         <param name="pid_o">1.0</param>
         <!-- Set to "true" to log every read/write cycle's firmware state
              (encoders, PID target, PWM, filtered speed) at 20Hz, which is
